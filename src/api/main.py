@@ -49,7 +49,12 @@ class ValidatedRequest(BaseModel):
 @app.post("/api/chat")
 async def chat(request: ValidatedRequest):
     try:
-        task = ConversationTask(...)
+        task = ConversationTask(
+            message=request.message,
+            intent=request.intent,
+            conversation_state=request.conversation_state,
+            context=request.context
+        )
 
         async def error_handled_stream():
             try:
