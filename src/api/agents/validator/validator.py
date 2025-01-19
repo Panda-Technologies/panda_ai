@@ -8,8 +8,8 @@ from src.api.type_def import ValidatedIntent, ValidationResult
 
 class ConversationValidator:
     def __init__(self):
-        # Define required information for each stage
-        self.stage_requirements = {
+        # Define required information only for degree planning
+        self.degree_planning_requirements = {
             "initial_contact": {
                 "required": ["student_intent"],
                 "optional": ["academic_year", "transfer_credits"]
@@ -24,9 +24,9 @@ class ConversationValidator:
             }
         }
 
-        # Define valid stage transitions
-        self.valid_transitions = {
-            "initial_contact": ["degree_planning", "course_scheduling", "general_info"],
+        # Define valid stage transitions for degree planning
+        self.degree_planning_transitions = {
+            "initial_contact": ["degree_planning", "course_scheduling", "requirement_check"],
             "degree_planning": ["course_scheduling", "requirement_check"],
             "course_scheduling": ["review", "requirement_check"]
         }
@@ -36,26 +36,32 @@ class ConversationValidator:
             validated_intent: ValidatedIntent,
             current_state: Dict[str, Any]
     ) -> ValidationResult:
-        try:
-            current_stage = current_state.get("current_stage", "initial_contact")
-            collected_info = current_state.get("collected_info", {})
-            intent_type = validated_intent.type
+        """Validates conversation flow based on intent"""
+        current_stage = current_state.get("current_stage", "initial_contact")
+        collected_info = current_state.get("collected_info", {})
+        intent_type = validated_intent.type
 
-            # Check if we have all required info for current stage
-            missing_info = []
-            if current_stage in self.stage_requirements:
-                for required_field in self.stage_requirements[current_stage]["required"]:
+        # Only check for missing information if this is a degree planning intent
+        missing_info = []
+        is_valid_transition = True
+        next_action = "proceed"
+        suggested_prompt = None
+
+        if intent_type == "degree_planning":
+            # Check required info for current stage
+            if current_stage in self.degree_planning_requirements:
+                for required_field in self.degree_planning_requirements[current_stage]["required"]:
                     if required_field not in collected_info:
                         missing_info.append({
                             "field": required_field,
                             "importance": "required"
                         })
 
-            # Determine if the intended transition is valid
+            # Check stage transition for degree planning
             next_stage = self.determine_next_stage(intent_type, current_stage)
-            is_valid_transition = next_stage in self.valid_transitions.get(current_stage, [])
+            is_valid_transition = next_stage in self.degree_planning_transitions.get(current_stage, [])
 
-            # Generate appropriate next action/prompt
+            # Generate next step only for degree planning
             next_action, suggested_prompt = self.generate_next_step(
                 current_stage,
                 missing_info,
@@ -63,33 +69,25 @@ class ConversationValidator:
                 is_valid_transition
             )
 
-            return ValidationResult(
-                is_ready_to_proceed=len(missing_info) == 0 and is_valid_transition,
-                current_stage=current_stage,
-                missing_info=missing_info,
-                next_action=next_action,
-                suggested_prompt=suggested_prompt or "",  # Provide default empty string
-                state_valid=is_valid_transition
-            )
-        except Exception as e:
-            logging.error(f"Error in validation: {e}", exc_info=True)
-            return ValidationResult(
-                is_ready_to_proceed=False,
-                current_stage=current_stage,
-                missing_info=[],
-                next_action="error",
-                suggested_prompt="I apologize, but I encountered an error validating the conversation state.",
-                state_valid=False
-            )
+        return ValidationResult(
+            is_ready_to_proceed=len(missing_info) == 0 and is_valid_transition,
+            current_stage=current_stage,
+            missing_info=missing_info,
+            next_action=next_action,
+            suggested_prompt=suggested_prompt or "",
+            state_valid=is_valid_transition
+        )
 
     def determine_next_stage(self, intent_type: str, current_stage: str) -> str:
         """Maps intent types to next stages"""
-        stage_mapping = {
-            "degree_planning": "degree_planning",
-            "course_scheduling": "course_scheduling",
-            "general_question": "general_info"
-        }
-        return stage_mapping.get(intent_type, current_stage)
+        if intent_type == "degree_planning":
+            stage_mapping = {
+                "degree_planning": "degree_planning",
+                "course_scheduling": "course_scheduling",
+                "requirement_check": "requirement_check"
+            }
+            return stage_mapping.get(intent_type, current_stage)
+        return current_stage
 
     def generate_next_step(
             self,
@@ -98,11 +96,11 @@ class ConversationValidator:
             intent: ValidatedIntent,
             is_valid_transition: bool
     ) -> Tuple[str, str]:
-        """Generates next action and suggested prompt based on validation results"""
+        """Generates next action and prompt only for degree planning"""
         if not is_valid_transition:
             return (
                 "redirect",
-                f"I notice you want to discuss {intent.type}. "
+                f"I notice you want to discuss degree planning. "
                 f"However, let's first complete your {current_stage} information."
             )
 
@@ -115,7 +113,7 @@ class ConversationValidator:
 
         return (
             "proceed",
-            "Great! Let's continue with your request."  # Default message instead of None
+            "Great! Let's continue with your request."
         )
 
 
