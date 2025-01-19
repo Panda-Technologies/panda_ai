@@ -1,0 +1,8 @@
+{
+  "default": {
+    "type": "azure",
+    "api_version": "${AZURE_OPENAI_API_VERSION}",
+    "azure_endpoint": "${AZURE_OPENAI_ENDPOINT}",
+    "azure_deployment": "${AZURE_OPENAI_DEPLOYMENT:gpt-4}"
+  }
+}
