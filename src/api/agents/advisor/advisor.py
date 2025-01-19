@@ -44,8 +44,9 @@ async def advise(
         # Get research if needed for external context
         research_results = {}
         if research_context:
-            from src.api.agents.researcher.researcher import research_topic
-            research_results = await research_topic(research_context)
+            from src.api.agents.researcher.researcher import AcademicResearcher
+            researcher = AcademicResearcher()
+            research_results = await researcher.research_topic(research_context)
             print(f'Research results: {research_results}')
 
         # Get academic info from UNC system
