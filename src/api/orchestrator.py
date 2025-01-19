@@ -65,7 +65,7 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
             yield create_message("researcher", "Gathering external information...")
             research_results = await researcher.research_topic(
                 instruction=task.message,
-                current_state=task.conversation_state
+                current_state=task.conversation_state  # Now matches the parameter
             )
             yield create_message("researcher", "Research complete", research_results)
 
