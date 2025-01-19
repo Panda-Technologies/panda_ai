@@ -1,5 +1,6 @@
 import os
 import json
+import traceback
 from typing import List, Dict, Optional
 import requests
 from dotenv import load_dotenv
@@ -45,7 +46,7 @@ class AcademicResearcher:
     @trace
     def needs_research(self, query: str) -> Optional[List[str]]:
         """Determine if query needs external research and in what categories"""
-        query_lower = query.lower()
+        query_lower = query
         needed_categories = []
 
         for category, triggers in self.external_triggers.items():
@@ -91,10 +92,10 @@ class AcademicResearcher:
     @trace
     async def research_topic(self,
                              instruction: str,
+                             current_state: Optional[Dict] = None,
                              feedback: str = "No feedback") -> Dict:
         """Main research function that determines need and executes research"""
         try:
-            # First check if we need external research
             categories = self.needs_research(instruction)
             if not categories:
                 return {
@@ -102,24 +103,45 @@ class AcademicResearcher:
                     "message": "No external research needed - UNC-specific query"
                 }
 
-            # Get research queries from prompty
+            print(f"Research categories found: {categories}")
+
             research_calls: List[ToolCall] = prompty.execute(
-                "academic_researcher.prompty",
-                inputs={"instructions": instruction, "feedback": feedback}
+                "researcher.prompty",
+                inputs={
+                    "instructions": instruction,
+                    "feedback": feedback,
+                    "categories": categories
+                }
             )
+
+            print(f"Research calls received: {research_calls}")
 
             # Execute research
             results = []
             for call in research_calls:
+                print(f"Processing call: {call.name}")
                 args = json.loads(call.arguments)
-                if call.name == "find_information":
-                    result = await self.find_information(**args)
+                print(f"With arguments: {args}")
+
+                if call.name in ["find_information", "find_academic_info", "find_career_info",
+                                 "find_research_opportunities", "find_grad_school_info"]:
+                    # Use the base find_information method for all search types
+                    search_query = args.get("query", "")
+                    if not search_query:
+                        continue
+
+                    result = await self.find_information(
+                        query=search_query,
+                        market=args.get("market", "en-US")
+                    )
+
                     results.append({
-                        "type": "information",
-                        "query": args["query"],
+                        "type": call.name,  # Keep track of what type of search this was
+                        "query": search_query,
+                        "category": args.get("category") or args.get("focus") or args.get("program_type"),
                         "data": result
                     })
-                # Add similar handling for entities and news if needed
+                    print(f"Got result: {result}")
 
             return {
                 "needed": True,
@@ -129,12 +151,12 @@ class AcademicResearcher:
 
         except Exception as e:
             print(f"Error in research: {e}")
+            traceback.print_exc()  # Add this for better error tracking
             return {
                 "needed": False,
                 "error": str(e),
                 "message": "Error during research process"
             }
-
 
 @trace
 async def process_results(results: Dict) -> Dict:
