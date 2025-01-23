@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import List, Union, Dict, AsyncGenerator
+from typing import List, Union, Dict, AsyncGenerator, Any
 from prompty.tracer import trace
 import logging
 import json
 
 # Import from shared types
-from src.api.type_def import ConversationTask, Message, ValidatedIntent
+from src.api.type_def import ConversationTask, Message, ValidatedIntent, TypeChatContext, ConversationState
 
 # Import agents
 from src.api.agents.researcher.researcher import AcademicResearcher
@@ -35,11 +35,63 @@ async def should_research(intent: ConversationTask) -> bool:
         return any(topic in intent.data.get("topics", []) for topic in needs_research)
     return needs_research
 
+
+async def process_typechat_context(context: TypeChatContext, state: ConversationState) -> Dict[str, Any]:
+    """Process TypeChat context to enhance AI understanding"""
+
+    # Map TypeChat categories to AI advisor stages
+    stage_mapping = {
+        "initial_query": "gathering_info",
+        "gathering_info": "needs_clarification",
+        "needs_clarification": "ready_for_plan",
+        "ready_for_plan": "plan_created"
+    }
+
+    # Update state with TypeChat information
+    current_stage = state.current_stage
+    if context.data and context.data.get("context"):
+        current_stage = context.data["context"].get("currentStage", current_stage)
+
+    # Enhance collected info with TypeChat data
+    collected_info = state.collected_info or {}
+    if context.data:
+        if initial_info := context.data.get("initialInfo"):
+            collected_info.update({
+                "major": initial_info.get("major"),
+                "degree_type": initial_info.get("degreeType"),
+                "start_term": initial_info.get("startTerm")
+            })
+
+        if preferences := context.data.get("courseFocusPreferences"):
+            collected_info.update({
+                "interests": preferences.get("preferredGenEdFocuses", {}).get("focusAreas"),
+                "career_goals": preferences.get("careerGoal", {}).get("futureJobInterest")
+            })
+
+    return {
+        "current_stage": stage_mapping.get(current_stage, current_stage),
+        "collected_info": {k: v for k, v in collected_info.items() if v is not None}
+    }
+
 @trace
 async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str, None]:
     try:
         # 1. Validate conversation state and flow
         yield create_message("state_validation", "Validating conversation flow...")
+
+        # Convert dictionary to object attributes if needed
+        if isinstance(task.conversation_state, dict):
+            state = {
+                "current_stage": task.conversation_state.get("current_stage") or
+                                 task.conversation_state.get("stage") or
+                                 "initial_query",
+                "collected_info": task.conversation_state.get("collected_info") or
+                                  task.conversation_state.get("info", {}),
+                "typechat_history": task.conversation_state.get("typechat_history") or
+                                    task.conversation_state.get("history", [])
+            }
+            task.conversation_state = state
+
         flow_validation = await validate_state(task.intent, task.conversation_state)
 
         if not flow_validation["is_ready_to_proceed"]:
@@ -118,7 +170,7 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
         logging.error(error_msg)
         yield create_message(
             "error",
-            error_msg,
+            f"Error in conversation: {str(e)}",
             {"type": "orchestration_error", "details": str(e)}
         )
 
