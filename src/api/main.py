@@ -1,83 +1,68 @@
-import os
-from pathlib import Path
 from fastapi import FastAPI, HTTPException
-from dotenv import load_dotenv
-from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Dict, Any, Literal
-
-from src.api.orchestrator import ConversationTask, orchestrate_conversation, create_message
-
-base = Path(__file__).resolve().parent
-load_dotenv()
+from fastapi.responses import StreamingResponse
+import json
+from src.api.type_def import ValidatedRequest, ValidatedIntent
+from src.api.orchestrator import ConversationTask, orchestrate_conversation
 
 app = FastAPI()
 
-# CORS configuration (same as original)
-code_space = os.getenv("CODESPACE_NAME")
-app_insights = os.getenv("APPINSIGHTS_CONNECTIONSTRING")
-
-if code_space:
-    origin_8000 = f"https://{code_space}-8000.app.github.dev"
-    origin_5173 = f"https://{code_space}-5173.app.github.dev"
-    ingestion_endpoint = app_insights.split(';')[1].split('=')[1]
-    origins = [origin_8000, origin_5173, os.getenv("API_SERVICE_ACA_URI"),
-              os.getenv("WEB_SERVICE_ACA_URI"), ingestion_endpoint]
-else:
-    origins = ['*']
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class ValidatedIntent(BaseModel):
-    type: Literal["degree_planning", "course_scheduling", "career_guidance", "general_question"]
-    data: Dict[str, Any]
-
-class ValidatedRequest(BaseModel):
-    message: str
-    intent: ValidatedIntent
-    conversation_state: Optional[Dict[str, Any]] = None
-    context: Optional[Dict[str, Any]] = None
-
+async def stream_response(task: ConversationTask):
+    async for message in orchestrate_conversation(task):
+        yield message + "\n"
 
 @app.post("/api/chat")
-async def chat(request: ValidatedRequest):
+async def chat_endpoint(request: ValidatedRequest):
     try:
+        intent_data = {
+            "type": "career_guidance",
+            "data": {
+                "major": "Computer Science",
+                "degree_type": "BS",
+                "interests": ["artificial intelligence"],
+                "topics": ["career_path", "grad_school"],
+                "other_schools": ["Duke", "MIT", "Stanford"]
+            }
+        } if "major" in str(request.message).lower() else {
+            "type": "general_question",
+            "data": {
+                "topic": request.message,
+                "needs_research": True
+            }
+        }
+
         task = ConversationTask(
             message=request.message,
-            intent=request.intent,
-            conversation_state=request.conversation_state,
-            context=request.context
+            intent=ValidatedIntent(**intent_data),
+            conversation_state={
+                "current_stage": "initial_contact",
+                "collected_info": {
+                    "student_intent": "explore_careers" if "major" in str(request.message).lower() else "general_inquiry",
+                    "topic": request.message
+                }
+            },
+            context={
+                "academic_year": "2024",
+                "research_needed": True,
+                "research_topics": ["career_path", "other_universities"] if "major" in str(request.message).lower() else ["general_info"]
+            }
         )
-
-        async def error_handled_stream():
-            try:
-                async for message in orchestrate_conversation(task):
-                    yield message
-            except Exception as e:
-                error_msg = create_message(
-                    "error",
-                    "Stream error",
-                    {"error": str(e)}
-                )
-                yield error_msg
 
         return StreamingResponse(
-            error_handled_stream(),
-            media_type="text/event-stream",
+            stream_response(task),
+            media_type="text/event-stream"
         )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/")
-async def root():
-    return {"message": "UNC Academic Advisor API"}
 
 if __name__ == "__main__":
     import uvicorn
