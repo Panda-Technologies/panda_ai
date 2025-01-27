@@ -49,6 +49,8 @@ class ValidationResult(BaseModel):
     next_action: str
     suggested_prompt: Optional[str] = None
     state_valid: bool
+    collected_info: Dict[str, Any] = field(default_factory=dict)
+    message: str
 
 class ValidatedRequest(BaseModel):
     message: str
