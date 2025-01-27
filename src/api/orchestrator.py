@@ -94,22 +94,6 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
 
         flow_validation = await validate_state(task.intent, task.conversation_state)
 
-        if not flow_validation["is_ready_to_proceed"]:
-            yield create_message(
-                "advisor",
-                flow_validation["suggested_prompt"],
-                {"validation_failed": True, "missing_info": flow_validation["missing_info"]}
-            )
-            return
-
-        if flow_validation["next_action"] == "redirect":
-            yield create_message(
-                "advisor",
-                flow_validation["suggested_prompt"],
-                {"redirect": True, "target_stage": flow_validation["current_stage"]}
-            )
-            return
-
         # 2. Check if external research is needed
         research_results = None
         if await should_research(task.intent):
@@ -135,7 +119,12 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
 
         # Update conversation state with new information
         updated_state = task.conversation_state.copy()
-        updated_state["current_stage"] = flow_validation["current_stage"]
+        updated_state["collected_info"] = {
+            **task.conversation_state.get("collected_info", {}),
+            **flow_validation.get("collected_info", {})
+        }
+        updated_state["current_stage"] = flow_validation.get("current_stage", updated_state.get("current_stage"))
+        updated_state["validation_result"] = flow_validation
         updated_state["last_intent"] = task.intent.model_dump()
         print(f"Updated state: {academic_results}")
 
