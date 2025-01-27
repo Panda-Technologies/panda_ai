@@ -63,6 +63,11 @@ class AcademicInfoSearch:
         try:
             all_results = {}
             for item in items:
+                # Make sure we have a string query to use as key
+                query_key = item.get("query", str(item))  # Fallback to string representation if no query
+                if isinstance(query_key, dict):
+                    query_key = str(query_key)  # Convert dict to string if needed
+
                 vector_query = VectorizedQuery(
                     vector=item["embedding"],
                     k_nearest_neighbors=top_k,
@@ -71,14 +76,14 @@ class AcademicInfoSearch:
 
                 # Perform the search
                 results = self.search_client.search(
-                    search_text=item["query"],
+                    search_text=query_key,
                     vector_queries=[vector_query],
-                    select=["id", "content", "title", "url"],  # Modify fields as needed
+                    select=["id", "content", "title", "url"],
                     top=top_k
                 )
 
-                # Collect results into a dictionary
-                all_results[item["query"]] = [
+                # Store results using string key
+                all_results[query_key] = [
                     {
                         "id": doc["id"],
                         "title": doc["title"],
@@ -89,7 +94,7 @@ class AcademicInfoSearch:
                     for doc in results
                 ]
 
-            return all_results  # Now a dictionary with queries as keys
+            return all_results
 
         except Exception as e:
             logging.error(f"Error searching academic info: {e}")
