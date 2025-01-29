@@ -5,6 +5,9 @@ from prompty.tracer import trace
 from dotenv import load_dotenv
 import logging
 
+from src.api.agents.information.information import AcademicInfoSearch, find_academic_info
+from src.api.agents.researcher.researcher import AcademicResearcher
+
 load_dotenv()
 
 
@@ -41,29 +44,33 @@ async def advise(
     Main advising function that generates responses based on context and state
     """
     try:
-        # Get research if needed for external context
+        # Extract chat history from current state
+        chat_history = current_state.get("chat_history", [])
+
+        # Format chat history for the prompt
+        formatted_history = []
+        for msg in chat_history[-5:]:  # Limit to last 5 messages
+            role = msg.get("role", "unknown")
+            content = msg.get("message", "")
+            formatted_history.append(f"{role}: {content}")
+
+        # Get research if needed
         research_results = {}
         if research_context:
-            from src.api.agents.researcher.researcher import AcademicResearcher
             researcher = AcademicResearcher()
             research_results = await researcher.research_topic(research_context)
             print(f'Research results: {research_results}')
 
-        # Get academic info from UNC system
-        from src.api.agents.information.information import find_academic_info
-        print(f'Academic context: {academic_context}')
-        academic_results = await find_academic_info(academic_context)
-
-        # Generate advisor response
+        # Generate advisor response with chat history
         response = prompty.execute(
             "advisor.prompty",
             parameters={"stream": True},
             inputs={
                 "researchContext": research_context,
                 "research": research_results,
-                "academicContext": academic_context,
-                "academicInfo": academic_results,
+                "academicInfo": academic_context or {},
                 "currentState": current_state,
+                "chatHistory": formatted_history,
                 "feedback": feedback,
                 "assignment": conversation_context
             }
@@ -119,6 +126,8 @@ if __name__ == "__main__":
         result = await advise(
             conversation["context"],
             research_context,
+
+
             academic_context,
             conversation["current_state"]
         )
