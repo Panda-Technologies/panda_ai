@@ -29,6 +29,7 @@ class Message(BaseModel):
         "state_validation",
         "error",
         "partial",
+        "complete_response"
     ]
     message: str
     data: Union[List, Dict] = field(default_factory=dict)
