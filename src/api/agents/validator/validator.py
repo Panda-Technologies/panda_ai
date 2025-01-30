@@ -1,11 +1,9 @@
+import json
 import logging
-from typing import Dict, Any, List, Union, Tuple
+from typing import Dict, Any, List, Tuple
+import prompty
 from prompty.tracer import trace
-
-
-# Import from shared types
 from src.api.type_def import ValidatedIntent, ValidationResult
-
 
 def generate_next_step(
         current_stage: str,
@@ -36,178 +34,75 @@ def generate_next_step(
 
     return ("proceed", "Great! Let's continue.")
 
-
-class ConversationValidator:
-    def __init__(self):
-        self.intent_requirements = {
-            "degree_planning": {
-                "initial_contact": {
-                    "required": ["student_intent"],
-                    "optional": ["academic_year", "transfer_credits"]
-                },
-                "degree_planning": {
-                    "required": ["major", "degree_type"],
-                    "optional": ["interests", "career_goals"]
-                },
-                "course_scheduling": {
-                    "required": ["semester", "completed_courses"],
-                    "optional": ["preferred_times", "course_load"]
-                }
-            },
-            "course_scheduling": {
-                "initial_query": {
-                    "required": ["student_intent"],
-                    "optional": ["current_courses"]
-                },
-                "gathering_info": {
-                    "required": ["course_load", "semester"],
-                    "optional": ["preferred_times"]
-                },
-                "needs_clarification": {
-                    "required": ["scheduling_preferences"],
-                    "optional": ["constraints"]
-                }
-            },
-            "career_guidance": {
-                "initial_query": {
-                    "required": ["student_intent"],
-                    "optional": ["major"]
-                },
-                "gathering_info": {
-                    "required": ["career_goals"],
-                    "optional": ["interests"]
-                },
-                "needs_clarification": {
-                    "required": ["preferred_focus_areas"],
-                    "optional": ["certifications"]
-                }
-            },
-            "general_question": {
-                "initial_query": {
-                    "required": ["topic"],
-                    "optional": []
-                },
-                "gathering_info": {
-                    "required": ["specific_question"],
-                    "optional": ["context"]
-                }
-            }
-        }
-
-        self.stage_transitions = {
-            "degree_planning": {
-                "initial_contact": ["degree_planning", "course_scheduling", "requirement_check"],
-                "degree_planning": ["course_scheduling", "requirement_check"],
-                "course_scheduling": ["review", "requirement_check"]
-            },
-            "course_scheduling": {
-                "initial_query": ["gathering_info"],
-                "gathering_info": ["needs_clarification", "ready_for_plan"],
-                "needs_clarification": ["ready_for_plan"],
-                "ready_for_plan": ["plan_created"]
-            },
-            "career_guidance": {
-                "initial_query": ["gathering_info"],
-                "gathering_info": ["needs_clarification", "ready_for_plan"],
-                "needs_clarification": ["ready_for_plan"],
-                "ready_for_plan": ["plan_created"]
-            },
-            "general_question": {
-                "initial_query": ["gathering_info"],
-                "gathering_info": ["needs_clarification", "ready_for_plan"],
-                "needs_clarification": ["ready_for_plan"]
-            }
-        }
-
-    async def validate_conversation_flow(
-            self,
-            validated_intent: ValidatedIntent,
-            current_state: Dict[str, Any]
-    ) -> ValidationResult:
-        current_stage = current_state.get("current_stage", "initial_query")
-        collected_info = current_state.get("collected_info", {})
-        intent_type = validated_intent.type
-
-        # Update collected info
-        if validated_intent.data:
-            collected_info.update({
-                "major": validated_intent.data.get("major") or collected_info.get("major"),
-                "degree_type": validated_intent.data.get("degree_type") or collected_info.get("degree_type"),
-                "academic_year": "first_year" if ("first year" in str(validated_intent.data).lower() or
-                                                  "freshman" in str(validated_intent.data).lower())
-                else collected_info.get("academic_year"),
-                "student_intent": collected_info.get("student_intent") or "degree_planning",
-                "completed_courses": collected_info.get("completed_courses", []),
-                "current_courses": collected_info.get("current_courses", [])
-            })
-
-        # Check what info is missing
-        missing_info = []
-        if intent_type in self.intent_requirements:
-            if current_stage in self.intent_requirements[intent_type]:
-                requirements = self.intent_requirements[intent_type][current_stage]
-                for required_field in requirements["required"]:
-                    if required_field not in collected_info:
-                        missing_info.append({
-                            "field": required_field,
-                            "importance": "required"
-                        })
-
-        next_stage = self.determine_next_stage(intent_type, current_stage)
-        is_valid_transition = next_stage in self.stage_transitions.get(intent_type, {}).get(current_stage, [])
-
-        return ValidationResult(
-            is_ready_to_proceed=len(missing_info) == 0 and is_valid_transition,
-            current_stage=current_stage,
-            missing_info=missing_info,
-            next_action="gather_info" if missing_info else "proceed",
-            suggested_prompt="",  # Remove suggested prompts
-            state_valid=is_valid_transition,
-            collected_info=collected_info,
-            message=""  # Remove messages
-        )
-
-    def determine_next_stage(self, intent_type: str, current_stage: str) -> str:
-        stage_mapping = {
-            "degree_planning": {
-                "initial_contact": "degree_planning",
-                "degree_planning": "course_scheduling",
-                "course_scheduling": "requirement_check"
-            },
-            "course_scheduling": {
-                "initial_query": "gathering_info",
-                "gathering_info": "needs_clarification",
-                "needs_clarification": "ready_for_plan"
-            },
-            "career_guidance": {
-                "initial_query": "gathering_info",
-                "gathering_info": "needs_clarification",
-                "needs_clarification": "ready_for_plan"
-            },
-            "general_question": {
-                "initial_query": "gathering_info",
-                "gathering_info": "ready_for_plan"
-            }
-        }
-        return stage_mapping.get(intent_type, {}).get(current_stage, current_stage)
-
-
 @trace
-async def validate_state(intent: ValidatedIntent, state: Dict[str, Any]) -> Dict[str, Any]:
-    """Main validation function called by orchestrator"""
-    validator = ConversationValidator()
-    result = await validator.validate_conversation_flow(intent, state)
-    return result.model_dump()
+async def validate_state(intent: ValidatedIntent, state: Dict[str, Any], message: str = "") -> Dict[str, Any]:
+    """Main validation function with AI-determined academic info checking"""
+    relevant_state = {
+        "current_stage": state.get("current_stage"),
+        "collected_info": state.get("collected_info", {}),
+        # Include only last few relevant messages
+        "recent_messages": state.get("chat_history", [])[-3:] if state.get("chat_history") else []
+    }
+    print("Relevant State: ", relevant_state)
+    try:
+        # Execute the validator prompt
+        raw_validation_result = prompty.execute(
+            "validator.prompty",
+            inputs={
+                "conversation": message,
+                "current_state": json.dumps(relevant_state),
+                "intent": json.dumps(intent.model_dump())
+            }
+        )
+        # Parse the JSON response
+        try:
+            validation_result = json.loads(raw_validation_result) if isinstance(raw_validation_result, str) else raw_validation_result
+        except json.JSONDecodeError as je:
+            logging.error(f"Failed to parse validation result: {je}")
+            return {
+                "is_ready_to_proceed": False,
+                "current_stage": state.get("current_stage", "initial_query"),
+                "missing_info": [],
+                "next_action": "error",
+                "state_valid": False,
+                "collected_info": state.get("collected_info", {}),
+                "needs_academic_info": False,
+                "academic_info_reason": "Error parsing validation result",
+                "message": str(je)
+            }
 
+        # Ensure we have all required fields
+        return {
+            "is_ready_to_proceed": validation_result.get("isValid", False),
+            "current_stage": validation_result.get("currentStage", state.get("current_stage", "initial_query")),
+            "missing_info": validation_result.get("missingInformation", []),
+            "next_action": "proceed",
+            "state_valid": True,
+            "collected_info": state.get("collected_info", {}),
+            "needs_academic_info": validation_result.get("needsAcademicInfo", False),
+            "academic_info_reason": validation_result.get("reasonForAcademicInfo", ""),
+            "message": ""
+        }
+
+    except Exception as e:
+        logging.error(f"Error in validation: {str(e)}")
+        return {
+            "is_ready_to_proceed": False,
+            "current_stage": state.get("current_stage", "initial_query"),
+            "missing_info": [],
+            "next_action": "error",
+            "state_valid": False,
+            "collected_info": state.get("collected_info", {}),
+            "needs_academic_info": False,
+            "academic_info_reason": "Error in validation",
+            "message": str(e)
+        }
 
 if __name__ == "__main__":
-    # Test the validator
-    test_intent = {
-        "type": "degree_planning",
-        "data": {
-            "major": "Computer Science"
-        }
-    }
+    test_intent = ValidatedIntent(
+        type="degree_planning",
+        data={"major": "Computer Science"}
+    )
     test_state = {
         "current_stage": "initial_contact",
         "collected_info": {
@@ -216,6 +111,5 @@ if __name__ == "__main__":
     }
 
     import asyncio
-
     result = asyncio.run(validate_state(test_intent, test_state))
     print(result)
