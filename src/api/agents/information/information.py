@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import ConnectionType
@@ -20,80 +20,6 @@ load_dotenv()
 
 # Initialize logging and tracing
 logger = logging.getLogger(__name__)
-
-
-def get_search_terms(context: Dict) -> List[str]:
-    """Extract specific search terms from context for any major/department"""
-    search_terms = []
-
-    # Extract major and degree type info
-    major = None
-    degree_type = None
-
-    if isinstance(context, dict):
-        # Get data from the correct structure
-        if isinstance(context, dict) and 'data' in context:
-            data = context['data']
-            initial_info = data.get('initialInfo', {})
-            topic = initial_info.get('topic', '').lower()
-            major = initial_info.get('major')
-
-            # Check for degree type in both places
-            degree_type = initial_info.get('degreeType')
-            if not degree_type:
-                # Look for degree type in topic/query
-                lower_topic = topic.lower()
-                if 'bs' in lower_topic or 'b.s.' in lower_topic:
-                    degree_type = 'BS'
-                elif 'ba' in lower_topic or 'b.a.' in lower_topic:
-                    degree_type = 'BA'
-
-            # Try to extract major from topic if not directly provided
-            if not major and topic:
-                # Clean topic to extract potential major
-                topic_cleaned = topic.replace('requirements', '').replace('major', '').strip()
-                if topic_cleaned:
-                    words = topic_cleaned.split()
-                    # Handle things like "cs" -> "Computer Science"
-                    if topic_cleaned.lower() == 'cs':
-                        major = 'Computer Science'
-                    else:
-                        major = ' '.join(words).title()
-
-    # Format search terms if we have major info
-    if major:
-        major = major.strip()
-        # Base queries
-        search_terms.append(f"{major} Major")
-        search_terms.append(f"{major} Program Requirements UNC")
-
-        # Degree-specific queries
-        if degree_type:
-            search_terms.extend([
-                f"{major} {degree_type} Requirements UNC",
-                f"{major} {degree_type} Degree Requirements",
-                f"{major} {degree_type} Major Core Requirements",
-                f"{major} {degree_type} Curriculum"
-            ])
-
-        # Department queries
-        if major.lower() == "computer science":
-            search_terms.extend([
-                "COMP Major Requirements",
-                f"COMP {degree_type} Requirements" if degree_type else "COMP Requirements"
-            ])
-
-        # Add specific page number queries if known
-        known_pages = {
-            "Computer Science BS": "478",
-            "Computer Science BA": "475"
-        }
-        key = f"{major} {degree_type}" if degree_type else major
-        if page := known_pages.get(key):
-            search_terms.append(f"{page} {major} Major")
-
-    print(f"Generated search terms: {search_terms}")  # Debug print
-    return search_terms
 
 class AcademicInfoSearch:
     def __init__(self):
@@ -206,64 +132,178 @@ class AcademicInfoSearch:
             logging.error(f"Error searching academic info: {e}")
             raise
 
+def validate_queries(queries_data: Dict[str, Any], expected_major: str) -> Dict[str, Any]:
+    """Validate and correct queries to ensure they use the exact major name."""
+    if not queries_data:
+        # Create a default structure if queries_data is None or empty
+        return {
+            "queries": [
+                f"{expected_major} requirements UNC",
+                f"{expected_major} major requirements",
+                f"{expected_major} program requirements",
+                f"{expected_major} required courses"
+            ],
+            "focus_areas": [
+                "Major Requirements",
+                "Program Structure",
+                "Course Requirements"
+            ],
+            "context": {
+                "major": expected_major,
+                "degree_type": None,
+                "specialization": None
+            },
+            "topic": ""  # Default empty topic
+        }
+
+    # Ensure context is a dictionary
+    if isinstance(queries_data.get("context"), str):
+        queries_data["context"] = {
+            "major": expected_major,
+            "degree_type": None,
+            "specialization": None
+        }
+    elif not isinstance(queries_data.get("context"), dict):
+        queries_data["context"] = {
+            "major": expected_major,
+            "degree_type": None,
+            "specialization": None
+        }
+
+    # Check and correct context major
+    if queries_data["context"].get("major") != expected_major:
+        queries_data["context"]["major"] = expected_major
+
+    # Validate and correct queries
+    if "queries" in queries_data:
+        corrected_queries = []
+        for query in queries_data["queries"]:
+            if expected_major not in query:
+                # Replace any major-like terms with the expected major
+                corrected_query = query
+                for word in ["Psychology", "Computer Science", "Biology", "Chemistry"]:
+                    if word in query:
+                        corrected_query = query.replace(word, expected_major)
+                        break
+                corrected_queries.append(corrected_query)
+            else:
+                corrected_queries.append(query)
+        queries_data["queries"] = corrected_queries
+
+    # Filter queries for requirements if that's the topic
+    topic = queries_data.get("topic", "")
+    if topic and isinstance(topic, str) and "requirements" in topic.lower():
+        requirement_queries = [
+            q for q in queries_data.get("queries", [])
+            if any(term in q.lower() for term in ["requirement", "curriculum", "course", "program", "major"])
+        ]
+        if requirement_queries:
+            queries_data["queries"] = requirement_queries
+
+    # Ensure queries array exists and has content
+    if "queries" not in queries_data or not queries_data["queries"]:
+        queries_data["queries"] = [
+            f"{expected_major} requirements UNC",
+            f"{expected_major} major requirements",
+            f"{expected_major} program requirements",
+            f"{expected_major} required courses"
+        ]
+
+    # Validate focus areas
+    if "focus_areas" not in queries_data or not isinstance(queries_data["focus_areas"], list):
+        queries_data["focus_areas"] = [
+            "Major Requirements",
+            "Program Structure",
+            "Course Requirements"
+        ]
+
+    # Ensure topic exists
+    if "topic" not in queries_data:
+        queries_data["topic"] = ""
+
+    return queries_data
 
 async def find_academic_info(context: Dict[str, any] | str) -> Dict[str, any]:
     """Main function to find academic information based on context."""
     try:
-        # Extract search context and terms
-        search_terms = get_search_terms(context) if isinstance(context, dict) else []
+        # Extract and format the context for the template
+        formatted_context = {
+            "current_request": {
+                "major": None,
+                "topic": None,
+                "degree_type": None,
+                "category": None
+            }
+        }
 
-        print(f"context: {context}, search_terms: {search_terms}")
+        if isinstance(context, dict):
+            if 'initialInfo' in context:
+                formatted_context["current_request"].update({
+                    "major": context['initialInfo'].get('major'),
+                    "topic": context['initialInfo'].get('topic'),
+                    "category": context['initialInfo'].get('category'),
+                    "degree_type": context['initialInfo'].get('degreeType')
+                })
+            if 'degreeProgram' in context:
+                if not formatted_context["current_request"]["major"]:
+                    formatted_context["current_request"]["major"] = context['degreeProgram'].get('major')
+
+        print(f"Formatted context for prompty: {json.dumps(formatted_context, indent=2)}")
 
         # Generate queries using prompty
         raw_queries = prompty.execute(
             "information.prompty",
             inputs={
-                "context": context if isinstance(context, str) else json.dumps(context),
+                "context": json.dumps(formatted_context),
                 "chat_history": context.get("chat_history", []) if isinstance(context, dict) else [],
                 "conversation_state": context.get("conversation_state", {}) if isinstance(context, dict) else {}
             }
         )
 
-        # Combine specific terms and prompty queries
-        search_queries = set(search_terms)  # Use set to remove duplicates
-        try:
-            if isinstance(raw_queries, str):
-                parsed_queries = json.loads(raw_queries)
-                if isinstance(parsed_queries, dict) and "queries" in parsed_queries:
-                    search_queries.update(parsed_queries["queries"])
-                elif isinstance(parsed_queries, list):
-                    search_queries.update(parsed_queries)
-            elif isinstance(raw_queries, dict):
-                if "queries" in raw_queries:
-                    search_queries.update(raw_queries["queries"])
-            elif isinstance(raw_queries, list):
-                search_queries.update(raw_queries)
-        except json.JSONDecodeError:
-            logging.warning("Failed to parse prompty queries")
-            if search_queries:  # If we have explicit terms, continue with those
-                pass
-            else:  # Otherwise, use raw query as fallback
-                search_queries = {str(raw_queries)}
+        # Parse and validate the generated queries
+        if isinstance(raw_queries, str):
+            try:
+                queries_data = json.loads(raw_queries)
+            except json.JSONDecodeError:
+                queries_data = {
+                    "queries": [],
+                    "focus_areas": [],
+                    "context": {},
+                    "topic": "",
+                    "error": "Failed to parse queries"
+                }
+        else:
+            queries_data = raw_queries
 
-        search_queries = list(filter(None, search_queries))  # Remove empty queries
+        # Validate and correct queries
+        expected_major = formatted_context["current_request"]["major"]
+        if not expected_major:
+            return {
+                "courses": [],
+                "requirements": [],
+                "programs": [],
+                "raw_results": {},
+                "error": "No major specified in context"
+            }
 
-        if not search_queries:
-            raise ValueError("No valid search queries generated")
+        queries_data = validate_queries(queries_data, expected_major)
 
-        # Log the queries we're using
-        logging.info(f"Search queries: {search_queries}")
+        print(f"Validated queries: {json.dumps(queries_data, indent=2)}")
 
-        # Initialize search client and get results
+        # Continue with search process...
         search_client = AcademicInfoSearch()
-        embedded_items = await search_client.get_embeddings(search_queries)
+        embedded_items = await search_client.get_embeddings(queries_data["queries"])
         if not embedded_items:
-            raise ValueError("No embeddings generated")
+            return {
+                "courses": [],
+                "requirements": [],
+                "programs": [],
+                "raw_results": {},
+                "error": "No embeddings generated"
+            }
 
-        # Perform search and process results
         results = await search_client.search_academic_info(embedded_items)
 
-        # Process and categorize results
         processed_results = {
             "courses": [],
             "requirements": [],
@@ -271,22 +311,20 @@ async def find_academic_info(context: Dict[str, any] | str) -> Dict[str, any]:
             "raw_results": results
         }
 
-        # Categorize search results
         for query_results in results.values():
             for result in query_results:
-                # Extract course info
-                if any(word in result['content'].lower() for word in ['course', 'comp', 'prerequisites']):
-                    processed_results['courses'].append(result)
-                # Extract requirement info
-                elif 'requirement' in result['content'].lower():
-                    processed_results['requirements'].append(result)
-                # General program info
-                else:
-                    processed_results['programs'].append(result)
+                content_lower = result['content'].lower()
+                if any(word in content_lower for word in ['course', 'prerequisite', 'sequence', 'credit']):
+                    if result not in processed_results['courses']:
+                        processed_results['courses'].append(result)
+                if any(word in content_lower for word in ['requirement', 'required', 'curriculum', 'degree']):
+                    if result not in processed_results['requirements']:
+                        processed_results['requirements'].append(result)
+                if any(word in content_lower for word in ['program', 'major', 'concentration', 'track']):
+                    if result not in processed_results['programs']:
+                        processed_results['programs'].append(result)
 
         return processed_results
 
     except Exception as e:
         logging.error(f"Error finding academic info: {e}")
-        logging.error(f"Error details: {str(e)}", exc_info=True)
-        raise
