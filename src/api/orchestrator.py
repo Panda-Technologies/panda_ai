@@ -73,6 +73,26 @@ async def process_typechat_context(context: TypeChatContext, state: Conversation
         "collected_info": {k: v for k, v in collected_info.items() if v is not None}
     }
 
+def requires_academic_info(intent: ValidatedIntent, message: str) -> bool:
+    """Determine if this interaction requires fetching academic information"""
+    academic_info_triggers = {
+        "degree_planning": ["requirements", "prerequisites", "courses",
+                          "curriculum", "schedule", "major"],
+        "course_scheduling": ["classes", "semester", "registration",
+                            "availability", "sections"],
+        "academic_support": ["tutoring", "resources", "help", "study"]
+    }
+
+    # Check intent type
+    if intent.type in academic_info_triggers:
+        triggers = academic_info_triggers[intent.type]
+        return any(trigger in message.lower() for trigger in triggers)
+
+    # Check if message contains academic keywords
+    academic_keywords = ["major", "minor", "degree", "class", "course",
+                        "requirements", "prerequisites"]
+    return any(keyword in message.lower() for keyword in academic_keywords)
+
 @trace
 async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str, None]:
     try:
@@ -83,16 +103,23 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
         if isinstance(task.conversation_state, dict):
             state = {
                 "current_stage": task.conversation_state.get("current_stage") or
-                                 task.conversation_state.get("stage") or
-                                 "initial_query",
-                "collected_info": task.conversation_state.get("collected_info") or
-                                  task.conversation_state.get("info", {}),
-                "typechat_history": task.conversation_state.get("typechat_history") or
-                                    task.conversation_state.get("history", [])
+                                task.conversation_state.get("stage") or
+                                "initial_query",
+                "collected_info": task.conversation_state.get("collected_info", {}),
+                "chat_history": task.conversation_state.get("chat_history", [])[-5:],
+                "typechat_history": task.conversation_state.get("typechat_history", [])
             }
             task.conversation_state = state
 
-        flow_validation = await validate_state(task.intent, task.conversation_state)
+
+        flow_validation = await validate_state(
+            intent=task.intent,
+            state=task.conversation_state,
+            message=task.message
+        )
+
+        print(f'Task: {task}')
+
 
         # 2. Check if external research is needed
         research_results = None
@@ -106,13 +133,22 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
             yield create_message("researcher", "Research complete", research_results)
 
         # 3. Get relevant academic information
-        yield create_message("academic_info", "Retrieving academic information...")
-        print(f"Academic context2: {task.intent.data}")
-        academic_results = await find_academic_info(
-            context=task.intent.data
-        )
-        print(f"Academic results: {academic_results}")
-        yield create_message("academic_info", "Academic info retrieved", academic_results)
+        academic_results = {}
+        needs_academic = flow_validation.get("needs_academic_info", False)
+        academic_reason = flow_validation.get("academic_info_reason", "")
+        print(f'Needs academic: {needs_academic}')
+
+        if needs_academic:
+            yield create_message("academic_info", f"Retrieving academic information: {academic_reason}")
+            try:
+                academic_results = await find_academic_info(context=task.intent.data)
+                yield create_message("academic_info", "Academic info retrieved", academic_results)
+            except ValueError as e:
+                logging.warning(f"No academic info queries could be generated: {str(e)}")
+                yield create_message("academic_info", "Could not retrieve academic information",
+                                   {"error": "No valid queries generated"})
+        else:
+            logging.info("Skipping academic info query - not needed based on validation")
 
         # 4. Generate advisor response
         yield create_message("advisor", "Generating response...", {"start": True})
@@ -128,24 +164,37 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
         updated_state["last_intent"] = task.intent.model_dump()
         print(f"Updated state: {academic_results}")
 
+        yield create_message("advisor", "Generating response...", {"start": True})
+
         advisor_response = await advise(
             conversation_context=task.message,
             research_context=research_results,
             academic_context=academic_results,
-            current_state=updated_state
+            current_state=task.conversation_state
         )
 
         # 5. Stream the response
+        complete_response = []
+
+        # Handle streaming response
         if isinstance(advisor_response, str):
-            yield create_message("partial", "Response", {"text": advisor_response})
+            complete_response.append(advisor_response)
+            yield create_message("partial", "Response chunk", {"text": advisor_response})
         else:
             for chunk in advisor_response:
+                complete_response.append(chunk)
                 yield create_message("partial", "Response chunk", {"text": chunk})
 
-        # 6. Final state validation
+        # Send complete message
+        full_response = "".join(complete_response)
+        yield create_message("complete_response", "Complete response", {
+            "text": full_response,
+            "complete": True
+        })
+
+        # 8. Final state
         yield create_message("advisor", "Response complete", {"complete": True})
 
-        # 7. Update and return final state
         final_state = {
             "stage_complete": flow_validation["is_ready_to_proceed"],
             "next_stage": flow_validation.get("next_stage"),
@@ -159,9 +208,10 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
         logging.error(error_msg)
         yield create_message(
             "error",
-            f"Error in conversation: {str(e)}",
+            error_msg,
             {"type": "orchestration_error", "details": str(e)}
         )
+
 
 
 if __name__ == "__main__":
