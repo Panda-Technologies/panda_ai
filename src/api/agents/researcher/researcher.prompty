@@ -9,6 +9,7 @@ model:
     api_version: 2024-08-01-preview
   parameters:
     tools: ${file:functions.json}
+    max_tokens: 10000
 sample:
   instructions: What are the prerequisites for medical school at Duke?
   feedback: Could you find information about Duke's medical school admission requirements and compare them with other medical schools?
