@@ -6,7 +6,7 @@ model:
   configuration:
     type: azure_openai
     azure_deployment: gpt-4o-mini
-    api_version: 2024-08-01-preview
+    api_version: 2024-05-01-preview
   parameters:
     tools: ${file:functions.json}
     max_tokens: 10000

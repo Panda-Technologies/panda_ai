@@ -50,7 +50,7 @@ class ConversationStateManager:
                     })
 
             # Keep last N messages
-            MAX_HISTORY = 10
+            MAX_HISTORY = 15
             current_state["chat_history"] = (
             current_state["chat_history"] + new_messages
             )[-MAX_HISTORY:]

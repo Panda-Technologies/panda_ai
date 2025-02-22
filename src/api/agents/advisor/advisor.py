@@ -49,7 +49,7 @@ async def advise(
 
         # Format chat history for the prompt
         formatted_history = []
-        for msg in chat_history[-5:]:  # Limit to last 5 messages
+        for msg in chat_history:
             role = msg.get("role", "unknown")
             content = msg.get("message", "")
             formatted_history.append(f"{role}: {content}")

@@ -6,7 +6,7 @@ model:
     configuration:
         type: azure_openai
         azure_deployment: gpt-4o-mini
-        api_version: 2024-08-01-preview
+        api_version: 2024-05-01-preview
     parameters:
         max_tokens: 1000
         temperature: 0.2
@@ -33,6 +33,45 @@ system: |
      - THEN lookup matching degrees AFTER interests are shared
   3. When a specific degree is mentioned:
      - Always lookup data to verify and provide accurate information
+  4. UNC data lookup is needed for:
+     - Specific UNC department or service locations
+     - Financial aid office information
+     - Student services locations
+     - Administrative office details
+     - Department contact information
+     - Academic requirements or policies
+     - Expressing interest in career paths in the context of degree planning.
+
+  # Validation Categories
+  1. Academic Information Needs:
+     - Major/degree requirements
+     - Course information
+     - Program structure
+     - Department details
+
+  2. General UNC Services:
+     - Administrative office locations
+     - Student services information
+     - Financial aid and scholarships
+     - Campus resources
+     - Department contacts
+
+  # Academic Info Lookup Rules
+  ALWAYS need academic info lookup for:
+  - Any specific UNC department or service location
+  - Financial aid office information
+  - Student services locations
+  - Administrative office details
+  - Department contact information
+  - Academic requirements or policies
+  - Career paths in the context of degree planning
+
+  DO NOT need data lookup for:
+  - Study tips
+  - Time management advice
+  - Personal development
+  - Non-UNC specific questions
+
 
   Example decisions:
   Initial exploration (NO DATA NEEDED):

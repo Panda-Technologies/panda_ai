@@ -41,7 +41,7 @@ async def validate_state(intent: ValidatedIntent, state: Dict[str, Any], message
         "current_stage": state.get("current_stage"),
         "collected_info": state.get("collected_info", {}),
         # Include only last few relevant messages
-        "recent_messages": state.get("chat_history", [])[-3:] if state.get("chat_history") else []
+        "recent_messages": state.get("chat_history", []) if state.get("chat_history") else []
     }
     print("Relevant State: ", relevant_state)
     try:

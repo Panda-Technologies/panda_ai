@@ -106,7 +106,7 @@ async def orchestrate_conversation(task: ConversationTask) -> AsyncGenerator[str
                                 task.conversation_state.get("stage") or
                                 "initial_query",
                 "collected_info": task.conversation_state.get("collected_info", {}),
-                "chat_history": task.conversation_state.get("chat_history", [])[-5:],
+                "chat_history": task.conversation_state.get("chat_history", []),
                 "typechat_history": task.conversation_state.get("typechat_history", [])
             }
             task.conversation_state = state
