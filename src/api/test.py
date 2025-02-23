@@ -1,94 +1,284 @@
-import asyncio
-import json
 import os
+from typing import Optional, List, Tuple
+import asyncio
+import logging
 from dotenv import load_dotenv
+from pydantic import SecretStr
 
-# Import from shared types
-from src.api.type_def import ValidatedIntent, ConversationTask
-from src.api.orchestrator import orchestrate_conversation
+from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.open_ai import (
+    AzureAISearchDataSource,
+    AzureChatCompletion,
+    AzureChatPromptExecutionSettings,
+    ExtraBody
+)
+from semantic_kernel.connectors.memory.azure_cognitive_search.azure_ai_search_settings import AzureAISearchSettings
+from semantic_kernel.contents import ChatHistory
+from semantic_kernel.functions import KernelArguments, FunctionResult
+from semantic_kernel.prompt_template import InputVariable, PromptTemplateConfig
 
-load_dotenv()
+
+class IntelligentRagChatClient:
+    def __init__(self,
+                 azure_openai_deployment: str,
+                 azure_openai_endpoint: str,
+                 azure_openai_api_key: str,
+                 azure_search_endpoint: str,
+                 azure_search_api_key: str,
+                 azure_search_index: str):
+
+        self.kernel = Kernel()
+        logging.basicConfig(level=logging.INFO)
+
+        # Initialize Azure OpenAI Chat Service
+        self.chat_service = AzureChatCompletion(
+            deployment_name=azure_openai_deployment,
+            endpoint=azure_openai_endpoint,
+            api_key=azure_openai_api_key,
+            api_version="2024-02-15-preview"
+        )
+        self.kernel.add_service(self.chat_service)
+
+        # Initialize Azure Cognitive Search settings
+        self.azure_ai_search_settings = AzureAISearchSettings(
+            endpoint=azure_search_endpoint,
+            index_name=azure_search_index,
+            api_key=SecretStr(azure_search_api_key)
+        )
+
+        self.chat_history = ChatHistory()
+        self.chat_history.add_system_message(
+            "I am an AI assistant that can access external knowledge when needed to provide accurate information."
+        )
+
+        # Set up RAG data source
+        self.az_source = AzureAISearchDataSource.from_azure_ai_search_settings(
+            azure_ai_search_settings=self.azure_ai_search_settings
+        )
+        self.extra_body = ExtraBody(data_sources=[self.az_source])
+
+        # Create a persistent execution settings object that injects search results automatically
+        self.chat_settings = AzureChatPromptExecutionSettings(service_id="default", extra_body=self.extra_body)
+
+        # Set up prompt templates with execution_settings so that RAG retrieval is applied
+        self._setup_prompt_templates()
+
+        # Add chat functions only once so the configuration isn’t lost.
+        self.standard_chat_function = self.kernel.add_function(
+            plugin_name="ChatBot",
+            function_name="Chat",
+            prompt_template_config=self.standard_template_config
+        )
+        self.rag_chat_function = self.kernel.add_function(
+            plugin_name="ChatBot",
+            function_name="Chat",
+            prompt_template_config=self.rag_template_config
+        )
+
+    def _setup_prompt_templates(self):
+        """Setup the various prompt templates needed for different operations,
+        embedding the execution settings that trigger retrieval augmentation."""
+        # Template for standard chat
+        self.standard_template_config = PromptTemplateConfig(
+            template="{{$chat_history}}\nUser: {{$user_input}}\nAssistant:",
+            name="standard_chat",
+            template_format="semantic-kernel",
+            input_variables=[
+                InputVariable(name="chat_history", description="The chat history", is_required=True),
+                InputVariable(name="user_input", description="The user input", is_required=True),
+            ]
+        )
+
+        # Template for RAG chat: note that while we include a slot for search_results,
+        # the key is to have execution_settings inject the full retrieved context.
+        self.rag_template_config = PromptTemplateConfig(
+            template="""Use the provided context to answer the user's question.
+Be specific and cite sources when appropriate.
+If the context doesn't contain relevant information, say so.
+
+Previous context: {{$chat_history}}
+Search context: {{$search_results}}
+User: {{$user_input}}
+Assistant:""",
+            name="rag_chat",
+            template_format="semantic-kernel",
+            input_variables=[
+                InputVariable(name="chat_history", description="The chat history", is_required=True),
+                InputVariable(name="search_results", description="Results from search", is_required=True),
+                InputVariable(name="user_input", description="The user input", is_required=True),
+            ],
+            execution_settings={"default": self.chat_settings}
+        )
+
+        # Template for RAG evaluation remains unchanged.
+        self.evaluation_template_config = PromptTemplateConfig(
+            template="""Evaluate if the following user query requires accessing external knowledge or if it can be 
+answered using general knowledge. Respond with either 'true' or 'false'. You must always answer with 'true' when a specific degree or class is mentioned by name such as "computer science, biology, chemistry, etc." However, do not answer with 'true' if the user requests to just plan a degree.
+
+User query: {{$user_input}}
+
+Consider:
+1. Does this require specific factual information?
+2. Does this ask about particular documents or data?
+3. Is this something that requires current or historical context?
+4. Is this mentioning or discussing a specific degree or class? If so, then it likely requires external knowledge.
+""",
+            name="rag_evaluation",
+            template_format="semantic-kernel",
+            input_variables=[
+                InputVariable(name="user_input", description="The user input", is_required=True),
+            ]
+        )
+
+        # Template for search query generation remains unchanged.
+        self.search_query_template_config = PromptTemplateConfig(
+            template="Convert this user question into an optimal search query that will find relevant information for UNC Chapel Hill and use chat history for context to formulate the query. Do not use the chat history to formulate the context if the current user input is not directly pertaining or responding to the history. Only answer with the full search query: {{$user_input}}{{$chat_history}}",
+            name="search_query",
+            template_format="semantic-kernel",
+            input_variables=[
+                InputVariable(name="user_input", description="The user input", is_required=True),
+                InputVariable(name="chat_history", description="The chat history", is_required=True),
+            ]
+        )
+
+    async def evaluate_rag_need(self, user_input: str) -> Tuple[bool, Optional[str]]:
+        """Evaluate if RAG is needed and generate a search query if it is."""
+        eval_function = self.kernel.add_function(
+            plugin_name="RagEval",
+            function_name="Evaluate",
+            prompt_template_config=self.evaluation_template_config
+        )
+
+        response = await self.kernel.invoke(
+            eval_function,
+            arguments=KernelArguments(user_input=user_input)
+        )
+        needs_rag = str(response).strip().lower() == "true"
+        print(f"RAG needs to answer: {needs_rag}")
+
+        search_query = None
+        if needs_rag:
+            query_function = self.kernel.add_function(
+                plugin_name="RagEval",
+                function_name="GenerateQuery",
+                prompt_template_config=self.search_query_template_config
+            )
+            search_query = await self.kernel.invoke(
+                query_function,
+                arguments=KernelArguments(user_input=user_input, chat_history=self.chat_history)
+            )
+            search_query = str(search_query).strip()
+
+        return needs_rag, search_query
+
+    async def perform_rag_search(self, search_query: str) -> FunctionResult | None:
+        """Perform a search using Azure AI Search.
+        The execution_settings here trigger the retrieval that produces a full context."""
+        search_response = await self.kernel.invoke_prompt(
+            search_query,
+            arguments=KernelArguments(
+                user_input=search_query,
+                chat_history=str(self.chat_history)
+            ),
+            execution_settings=self.chat_settings
+        )
+        print('search response:',search_query)
+        return search_response
+
+    async def generate_response(
+            self,
+            user_input: str,
+            rag_results: Optional[str] = None
+    ) -> str:
+        """Generate a response using either RAG results or standard chat.
+        Note: We now reuse functions that already have the correct execution_settings."""
+        if rag_results:
+            print('RAG results:',rag_results)
+            arguments = KernelArguments(
+                chat_history=str(self.chat_history),
+                user_input=user_input,
+                search_results=rag_results
+            )
+            response = await self.kernel.invoke(self.rag_chat_function, arguments=arguments)
+        else:
+            print('No RAG results')
+            arguments = KernelArguments(
+                chat_history=str(self.chat_history),
+                user_input=user_input
+            )
+            response = await self.kernel.invoke(self.standard_chat_function, arguments=arguments)
+        return str(response)
+
+    def extract_citations(self, response: str) -> List[str]:
+        """Extract citations from response if present."""
+        citations = []
+        if "[doc" in response:
+            import re
+            citations = re.findall(r'\[doc\d+\]', response)
+        return citations
+
+    async def process_message(self, user_input: str) -> Tuple[str, bool, Optional[List[str]]]:
+        """Process a user message and return the response along with RAG info."""
+        # First evaluate if we need RAG.
+        needs_rag, search_query = await self.evaluate_rag_need(user_input)
+
+        if needs_rag and search_query:
+            # Perform RAG search to obtain a detailed retrieval context.
+            search_results = await self.perform_rag_search(search_query)
+            response = await self.generate_response(user_input, search_results)
+        else:
+            response = await self.generate_response(user_input)
+
+        # Update chat history.
+        self.chat_history.add_user_message(user_input)
+        self.chat_history.add_assistant_message(response)
+
+        # Extract citations if RAG was used.
+        citations = self.extract_citations(response) if needs_rag else None
+
+        return response, needs_rag, citations
 
 
-async def test_advisor():
-    print("Starting advisor test...")
-
-    # Create a test intent with career guidance and external school comparison
-    intent_data = {
-        "type": "career_guidance",  # Changed to career_guidance to trigger research
-        "data": {
-            "major": "Computer Science",
-            "degree_type": "BS",
-            "interests": ["artificial intelligence"],
-            "topics": ["career_path", "grad_school"],  # Added topics to trigger research
-            "other_schools": ["Duke", "MIT", "Stanford"]
-        }
-    }
-
-    # Create a test task with a question about career prospects and grad school
-    task = ConversationTask(
-        message="I'm interested in AI and machine learning. Can you compare the ML programs at Duke, MIT, and Stanford, and tell me about career prospects in this field? Don't worry about getting initial_contact information, I just want to know the difference between those schools, not interested in degree scheduling right now",
-        intent=ValidatedIntent(**intent_data),
-        conversation_state={
-            "current_stage": "initial_contact",
-            "collected_info": {
-                "student_intent": "explore_careers",
-                "major": "Computer Science",
-                "degree_type": "BS",
-                "career_interests": ["artificial intelligence", "machine learning"]
-            }
-        },
-        context={
-            "academic_year": "2024",
-            "is_transfer": False,
-            "research_needed": True,  # Flag indicating research is needed
-            "research_topics": ["grad_school", "career_path", "other_universities"]
-        }
+async def chat():
+    load_dotenv()
+    # Initialize the client.
+    client = IntelligentRagChatClient(
+        azure_openai_deployment=os.environ["AZURE_DEPLOYMENT_NAME"],
+        azure_openai_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        azure_openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
+        azure_search_endpoint=os.environ["AZURE_AISEARCH_ENDPOINT"],
+        azure_search_api_key=os.environ["AZURE_AISEARCH_KEY"],
+        azure_search_index=os.environ["AZURE_AISEARCH_INDEX_NAME"]
     )
 
-    try:
-        print("\nSending request to advisor...")
+    print("Welcome to the Intelligent RAG Chat Client!")
+    print("Type 'exit' to end the conversation.\n")
 
-        async for message in orchestrate_conversation(task):
-            result = json.loads(message)
-            print(f"\nMessage Type: {result['type']}")
-            print(f"Message: {result['message']}")
-            if result.get('data'):
-                print("Data:")
-                print(json.dumps(result['data'], indent=2))
-            print("-" * 50)
+    while True:
+        try:
+            user_input = input("User> ")
+            if user_input.lower() == "exit":
+                print("\nGoodbye!")
+                break
 
-        print("\nTest completed successfully!")
+            response, used_rag, citations = await client.process_message(user_input)
 
-    except Exception as e:
-        print(f"\nError during test: {str(e)}")
-        raise
+            print("\nAssistant> ", end="")
+            print(response)
+
+            if used_rag:
+                print("\n[RAG was used for this response]")
+                if citations:
+                    print("Citations:", ", ".join(citations))
+            print()
+
+        except KeyboardInterrupt:
+            print("\n\nExiting chat...")
+            break
+        except Exception as e:
+            print(f"\nAn error occurred: {str(e)}")
+            continue
 
 
 if __name__ == "__main__":
-    # Environment check remains the same
-    print("Environment check:")
-    required_vars = [
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_API_VERSION",
-        "AZURE_SEARCH_ENDPOINT",
-        "AZURE_SEARCH_KEY",
-        "AZURE_SEARCH_INDEX_NAME"
-    ]
-
-    missing_vars = []
-    for var in required_vars:
-        if not os.getenv(var):
-            missing_vars.append(var)
-
-    if missing_vars:
-        print("Missing required environment variables:")
-        for var in missing_vars:
-            print(f"- {var}")
-        exit(1)
-
-    print("All required environment variables are set!")
-
-    # Run the test
-    asyncio.run(test_advisor())
+    asyncio.run(chat())
