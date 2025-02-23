@@ -1,12 +1,12 @@
 # type_def.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dataclasses import field
 from typing import Dict, Any, List, Literal, Union, Optional
 
 class TypeChatContext(BaseModel):
     category: str
     confidence: float
-    data: Optional[Dict[str, Any]] = field(default_factory=dict)
+    data = Field(default_factory=dict)
     message: Optional[str]
     notTranslated: Optional[str]
 
