@@ -1,143 +1,132 @@
-import json
-from datetime import datetime
+# Copyright (c) Microsoft. All rights reserved.
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from typing import Dict, Any, AsyncGenerator
+import asyncio
+import logging
 
-from src.api.agents.validator.validator import validate_state
-from src.api.state_manager import ConversationStateManager
-from src.api.type_def import ValidatedRequest, ValidatedIntent
-from src.api.orchestrator import ConversationTask, orchestrate_conversation, create_message
+from pydantic import SecretStr
+from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.open_ai import (
+    AzureAISearchDataSource,
+    AzureChatCompletion,
+    AzureChatPromptExecutionSettings,
+    ExtraBody,
+)
+from semantic_kernel.connectors.memory.azure_cognitive_search.azure_ai_search_settings import AzureAISearchSettings
+from semantic_kernel.contents import ChatHistory
+from semantic_kernel.functions import KernelArguments
+from semantic_kernel.prompt_template import InputVariable, PromptTemplateConfig
+from dotenv import load_dotenv
+import os
 
-app = FastAPI()
+load_dotenv()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+kernel = Kernel()
+logging.basicConfig(level=logging.INFO)
+
+# For example, AI Search index may contain the following document:
+
+# Emily and David, two passionate scientists, met during a research expedition to Antarctica.
+# Bonded by their love for the natural world and shared curiosity, they uncovered a
+# groundbreaking phenomenon in glaciology that could potentially reshape our understanding of climate change.
+
+# Depending on the index that you use, you might need to enable the below
+# and adapt it so that it accurately reflects your index.
+
+# azure_ai_search_settings["fieldsMapping"] = {
+#     "titleField": "source_title",
+#     "urlField": "source_url",
+#     "contentFields": ["source_text"],
+#     "filepathField": "source_file",
+# }
+
+# Create the data source settings
+azure_ai_search_settings = AzureAISearchSettings(
+    endpoint=os.environ["AZURE_AISEARCH_ENDPOINT"],
+    index_name=os.environ["AZURE_AISEARCH_INDEX_NAME"],
+    api_key=SecretStr(os.environ["AZURE_AISEARCH_KEY"]),
 )
 
-state_manager = ConversationStateManager()
+az_source = AzureAISearchDataSource.from_azure_ai_search_settings(azure_ai_search_settings=azure_ai_search_settings)
+
+extra = ExtraBody(data_sources=[az_source])
+req_settings = AzureChatPromptExecutionSettings(service_id="default", extra_body=extra)
+
+# When using data, use the 2024-02-15-preview API version.
+chat_service = AzureChatCompletion(
+    service_id="chat-gpt",
+    deployment_name=os.environ["AZURE_DEPLOYMENT_NAME"],  # Add this line
+    endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],        # Add this line
+    api_key=os.environ["AZURE_OPENAI_API_KEY"]          # Add this line
+)
+kernel.add_service(chat_service)
+
+prompt_template_config = PromptTemplateConfig(
+    template="{{$chat_history}}\nUser: {{$user_input}}\nAssistant:",
+    name="chat",
+    template_format="semantic-kernel",
+    input_variables=[
+        InputVariable(name="chat_history", description="The chat history", is_required=True),
+        InputVariable(name="user_input", description="The user input", is_required=True),  # Changed from 'request' to 'user_input'
+    ],
+    execution_settings={"default": req_settings},
+)
+chat_function = kernel.add_function(
+    plugin_name="ChatBot", function_name="Chat", prompt_template_config=prompt_template_config
+)
+
+chat_history = ChatHistory()
+chat_history.add_system_message("I am an AI assistant here to answer your questions.")
 
 
-async def stream_response(task: ConversationTask) -> AsyncGenerator[str, None]:
-    """Stream response with both partial updates and complete message"""
-    complete_chunks = []
-
-    async for message in orchestrate_conversation(task):
-        # Store message chunk if it's a partial or complete_response
-        json_msg = json.loads(message)
-        if json_msg["type"] in ["partial", "complete_response"]:
-            if "text" in json_msg["data"]:
-                complete_chunks.append(json_msg["data"]["text"])
-
-        # Yield each message line
-        yield message
-
-    # Add the complete message to the state
-    conversation_id = task.context.get("conversation_id", "default")
-    current_state = state_manager.get_history(conversation_id)
-    current_state["chat_history"].append({
-        "role": "assistant",
-        "message": "".join(complete_chunks),
-        "timestamp": datetime.now().isoformat()
-    })
-    state_manager.update_history(conversation_id, current_state)
-
-
-def process_intent_data(intent: ValidatedIntent) -> Dict[str, Any]:
-    """Extract relevant information from TypeChat intent data"""
-    collected_info = {}
-
-    if intent.data:
-        # Process initial info
-        if initial_info := intent.data.get("initialInfo", {}):
-            collected_info.update({
-                "major": initial_info.get("major"),
-                "degree_type": initial_info.get("degreeType"),
-                "student_intent": initial_info.get("category")
-            })
-
-        # Process scheduling preferences
-        if scheduling := intent.data.get("schedulingPreferences", {}):
-            collected_info["preferences"] = {
-                "time_preference": scheduling.get("timePreference"),
-                "summer_available": scheduling.get("summerAvailable"),
-                "constraints": scheduling.get("constraints", [])
-            }
-
-        # Process course focus preferences
-        if preferences := intent.data.get("courseFocusPreferences", {}):
-            collected_info["interests"] = preferences.get("preferredGenEdFocuses", {}).get("focusAreas", [])
-
-    return {k: v for k, v in collected_info.items() if v is not None}
-
-
-@app.post("/api/chat")
-async def chat_endpoint(request: ValidatedRequest):
-    """Handle chat interactions while maintaining state"""
+async def chat() -> bool:
     try:
-        conversation_id = request.context.get("conversation_id", "default")
-        current_state = state_manager.get_history(conversation_id)
+        user_input = input("User:> ")
+    except KeyboardInterrupt:
+        print("\n\nExiting chat...")
+        return False
+    except EOFError:
+        print("\n\nExiting chat...")
+        return False
 
-        # Merge new intent data with existing state
-        new_info = process_intent_data(request.intent)
+    if user_input == "exit":
+        print("\n\nExiting chat...")
+        return False
+    arguments = KernelArguments(
+        chat_history=str(chat_history),
+        user_input=user_input,
+        execution_settings=req_settings
+    )
 
-        # Preserve existing collected info and merge with new info
-        current_state["collected_info"] = {
-            **current_state.get("collected_info", {}),
-            **new_info
-        }
+    stream = False
+    if stream:
+        # streaming
+        full_message = None
+        print("Assistant:> ", end="")
+        async for message in kernel.invoke_stream(chat_function, arguments=arguments):
+            print(str(message[0]), end="")
+            full_message = message[0] if not full_message else full_message + message[0]
+        print("\n")
 
-        # Add message to chat history with full context
-        current_state["chat_history"].append({
-            "role": "user",
-            "message": request.message,
-            "intent": request.intent.model_dump(),
-            "timestamp": datetime.now().isoformat()
-        })
+        # The tool message containing cited sources is available in the context
+        chat_history.add_user_message(user_input)
+        for message in AzureChatCompletion.split_message(full_message):
+            chat_history.add_message(message)
+        return True
 
-        # Validate state and flow
-        flow_validation = await validate_state(
-            intent=request.intent,
-            state=current_state,
-            message=request.message
-        )
+    # Non streaming
+    answer = await kernel.invoke(chat_function, arguments=arguments)
+    print(f"Assistant:> {answer}")
+    chat_history.add_user_message(user_input)
+    for message in AzureChatCompletion.split_message(answer.value[0]):
+        chat_history.add_message(message)
+    return True
 
-        # Update state with new information
-        current_state["collected_info"].update(new_info)
-        current_state["current_stage"] = flow_validation.get("current_stage", current_state["current_stage"])
-        current_state["validation_result"] = flow_validation
-        current_state["last_intent"] = request.intent.model_dump()
 
-        # Store updated state
-        state_manager.update_history(conversation_id, current_state)
-
-        # Create conversation task with conversation_id in context
-        task = ConversationTask(
-            message=request.message,
-            intent=request.intent,
-            conversation_state=current_state,
-            context={
-                "validation_result": flow_validation,
-                "conversation_id": conversation_id
-            }
-        )
-
-        return StreamingResponse(
-            stream_response(task),
-            media_type="text/event-stream"
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def main() -> None:
+    chatting = True
+    while chatting:
+        chatting = await chat()
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    asyncio.run(main())
