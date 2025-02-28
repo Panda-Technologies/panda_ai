@@ -7,18 +7,16 @@ from pydantic import SecretStr
 
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.open_ai import (
-    AzureAISearchDataSource,
     AzureChatCompletion,
-    AzureChatPromptExecutionSettings,
-    ExtraBody
 )
 from semantic_kernel.connectors.memory.azure_cognitive_search.azure_ai_search_settings import AzureAISearchSettings
 from semantic_kernel.contents import ChatHistory
 from semantic_kernel.functions import KernelArguments, FunctionResult
 from semantic_kernel.prompt_template import InputVariable, PromptTemplateConfig
+from information_search.index import AzureRagChat
 
 
-class IntelligentRagChatClient:
+class IntelligentChatClient:
     def __init__(self,
                  azure_openai_deployment: str,
                  azure_openai_endpoint: str,
@@ -43,22 +41,13 @@ class IntelligentRagChatClient:
         self.azure_ai_search_settings = AzureAISearchSettings(
             endpoint=azure_search_endpoint,
             index_name=azure_search_index,
-            api_key=SecretStr(azure_search_api_key)
+            api_key=SecretStr(azure_search_api_key),
         )
 
         self.chat_history = ChatHistory()
         self.chat_history.add_system_message(
             "I am an AI assistant that can access external knowledge when needed to provide accurate information."
         )
-
-        # Set up RAG data source
-        self.az_source = AzureAISearchDataSource.from_azure_ai_search_settings(
-            azure_ai_search_settings=self.azure_ai_search_settings
-        )
-        self.extra_body = ExtraBody(data_sources=[self.az_source])
-
-        # Create a persistent execution settings object that injects search results automatically
-        self.chat_settings = AzureChatPromptExecutionSettings(service_id="default", extra_body=self.extra_body)
 
         # Set up prompt templates with execution_settings so that RAG retrieval is applied
         self._setup_prompt_templates()
@@ -93,7 +82,7 @@ class IntelligentRagChatClient:
         # the key is to have execution_settings inject the full retrieved context.
         self.rag_template_config = PromptTemplateConfig(
             template="""Use the provided context to answer the user's question.
-Be specific and cite sources when appropriate.
+Be specific and cite sources when appropriate. If you cannot find the answer from RAG, compare your results with the search results and use those if needed.
 If the context doesn't contain relevant information, say so.
 
 Previous context: {{$chat_history}}
@@ -106,8 +95,7 @@ Assistant:""",
                 InputVariable(name="chat_history", description="The chat history", is_required=True),
                 InputVariable(name="search_results", description="Results from search", is_required=True),
                 InputVariable(name="user_input", description="The user input", is_required=True),
-            ],
-            execution_settings={"default": self.chat_settings}
+            ]
         )
 
         # Template for RAG evaluation remains unchanged.
@@ -122,6 +110,8 @@ Consider:
 2. Does this ask about particular documents or data?
 3. Is this something that requires current or historical context?
 4. Is this mentioning or discussing a specific degree or class? If so, then it likely requires external knowledge.
+5. Anything UNC related should be marked as 'true'.
+6. If the user is asking for any financial aid or scholarships information, it should be marked as 'true'.
 """,
             name="rag_evaluation",
             template_format="semantic-kernel",
@@ -132,7 +122,30 @@ Consider:
 
         # Template for search query generation remains unchanged.
         self.search_query_template_config = PromptTemplateConfig(
-            template="Convert this user question into an optimal search query that will find relevant information for UNC Chapel Hill and use chat history for context to formulate the query. Do not use the chat history to formulate the context if the current user input is not directly pertaining or responding to the history. Only answer with the full search query: {{$user_input}}{{$chat_history}}",
+            template="""Analyze the user's question and create an optimal search query for UNC Chapel Hill information. 
+
+            USER INPUT: {{$user_input}}
+
+            CHAT HISTORY: {{$chat_history}}
+
+            SEARCH QUERY RULES:
+            1. Focus on UNC-specific terminology and context
+            2. Include official UNC department names, course designations, and program terms
+            3. Expand common UNC acronyms (e.g., "CS" → "Computer Science")
+            4. Translate general academic terms to UNC-specific equivalents:
+               - "courses before applying to major" → "gateway courses prerequisites major requirements"
+               - "financial aid" → "UNC Chapel Hill scholarships grants FAFSA CSS Profile"
+               - "housing" → "UNC residence halls dormitories on-campus housing"
+               - "majors" → "UNC undergraduate degree programs majors minors"
+               - "registration" → "UNC ConnectCarolina course registration enrollment appointment"
+            5. Add "UNC Chapel Hill" context for general queries
+            6. Do NOT use chat history for context if the current query is a new topic
+            7. Prioritize search terms that match UNC website structure and metadata
+            8. Avoid having site:unc.edu in the query
+
+            Create a search query with precise keywords that would return the most accurate results. Return ONLY the optimized search query text with no explanation or other text.
+
+            SEARCH QUERY:""",
             name="search_query",
             template_format="semantic-kernel",
             input_variables=[
@@ -174,14 +187,8 @@ Consider:
     async def perform_rag_search(self, search_query: str) -> FunctionResult | None:
         """Perform a search using Azure AI Search.
         The execution_settings here trigger the retrieval that produces a full context."""
-        search_response = await self.kernel.invoke_prompt(
-            search_query,
-            arguments=KernelArguments(
-                user_input=search_query,
-                chat_history=str(self.chat_history)
-            ),
-            execution_settings=self.chat_settings
-        )
+        rag_chat = AzureRagChat()
+        search_response = await rag_chat.generate_response(search_query, self.chat_history)
         print('search response:',search_query)
         return search_response
 
@@ -242,7 +249,7 @@ Consider:
 async def chat():
     load_dotenv()
     # Initialize the client.
-    client = IntelligentRagChatClient(
+    client = IntelligentChatClient(
         azure_openai_deployment=os.environ["AZURE_DEPLOYMENT_NAME"],
         azure_openai_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         azure_openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
