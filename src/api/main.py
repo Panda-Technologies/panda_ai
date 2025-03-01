@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from src.api.api_fetch.services import PandaService, UserService
+from src.api.api_fetch.services import PandaService, UserService, DegreeService
 import os
 from typing import Dict, Any
 
@@ -22,6 +22,7 @@ SESSION_COOKIE = os.getenv("PANDA_SESSION_COOKIE", "gql-api=s%3AmZ9_NJ8jAs_Ajqq5
 # Create services once at startup
 panda_service = PandaService(session_cookie=SESSION_COOKIE)
 user_service = UserService(panda_service=panda_service)
+degree_service = DegreeService(panda_service=panda_service)
 
 # API routes
 @app.get("/")
@@ -35,6 +36,14 @@ async def get_user():
         return user_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch user data: {str(e)}")
+
+@app.get("/degree", response_model=Dict[str, Any])
+async def get_degree():
+    try:
+        degree_data = degree_service.get_degree_req("Business Administration")
+        return degree_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch degree data: {str(e)}")
 
 # Health check endpoint
 @app.get("/health")
