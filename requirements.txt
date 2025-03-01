@@ -1,5 +1,0 @@
-click
-rich-click
-semantic-kernel
-pydantic
-python-dotenv
