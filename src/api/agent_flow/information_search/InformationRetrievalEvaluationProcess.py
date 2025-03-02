@@ -16,6 +16,7 @@ class InformationRetrievalEvaluationStep(KernelProcessStep[ConversationContext])
 
     async def activate(self, state: KernelProcessStepState[ConversationContext]):
         self.state = state.state or ConversationContext()
+        self._setup_information_retrieval()
 
     def _setup_information_retrieval(self):
         evaluation_template_config = PromptTemplateConfig(
@@ -56,7 +57,6 @@ class InformationRetrievalEvaluationStep(KernelProcessStep[ConversationContext])
     @kernel_function(name="analyze_rag_need")
     async def analyze_rag_need(self, context: KernelProcessStepContext, user_input: str):
         if self.kernel:
-            self._setup_information_retrieval()
             response = await self.kernel.invoke(
                 plugin_name="RagRecognizer",
                 function_name="evaluate_rag_need",
