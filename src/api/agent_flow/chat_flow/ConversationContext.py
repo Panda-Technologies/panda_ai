@@ -1,13 +1,35 @@
+from enum import Enum
 from typing import List, Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 from semantic_kernel.contents import ChatHistory
 
+class ConversationState(str, Enum):
+    """Enum representing possible conversation states."""
+    INITIAL = "initial"
+    DEGREE_PLANNING = "degree_planning"
+    GENERAL_QA = "general_qa"
+    COURSE_QUESTION = "course_question"
+
+class ConversationArtifact(BaseModel):
+    """Conversation state and collected information."""
+    current_state: ConversationState = ConversationState.INITIAL
+    student_name: Optional[str] = None
+    student_id: Optional[str] = None
+    degree_program: Optional[str] = None
+    completed_courses: List[str] = Field(default_factory=list)
+    current_semester: Optional[str] = None
+    available_days: List[str] = Field(default_factory=list)
+    interests: List[str] = Field(default_factory=list)
+    grad_year: Optional[str] = None
+
 
 class ConversationContext(BaseModel):
     """Context for the current conversation."""
-    # Raw message history as a list of dictionaries
-    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list)
+    last_intent: Optional[str] = None
+    artifact: ConversationArtifact = Field(default_factory=ConversationArtifact)
+
 
     def add_message(self, role: str, content: str, name: Optional[str] = None) -> None:
         """Add a message to the history."""
