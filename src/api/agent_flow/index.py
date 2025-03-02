@@ -12,9 +12,6 @@ async def chat():
         azure_openai_deployment=os.environ["AZURE_DEPLOYMENT_NAME"],
         azure_openai_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         azure_openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        azure_search_endpoint=os.environ["AZURE_AISEARCH_ENDPOINT"],
-        azure_search_api_key=os.environ["AZURE_AISEARCH_KEY"],
-        azure_search_index=os.environ["AZURE_AISEARCH_INDEX_NAME"]
     )
 
     print("Welcome to the Intelligent RAG Chat Client!")
