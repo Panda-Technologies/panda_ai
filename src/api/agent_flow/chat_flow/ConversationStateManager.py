@@ -10,6 +10,7 @@ from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
 from src.api.agent_flow.chat_flow.ResponseGenerator import ResponseGenerator
 from src.api.agent_flow.information_search.InformationRetrievalEvaluationProcess import \
     InformationRetrievalEvaluationStep
+from src.api.agent_flow.intent_recognition.RecognizeIntentProcess import IntentRecognitionStep
 
 
 class ConversationStateManager:
@@ -17,9 +18,7 @@ class ConversationStateManager:
                  azure_openai_deployment: str,
                  azure_openai_endpoint: str,
                  azure_openai_api_key: str,
-                 azure_search_endpoint: str,
-                 azure_search_api_key: str,
-                 azure_search_index: str, service_id: str = "default"):
+                 service_id: str = "default"):
         self.chat_service = AzureChatCompletion(
             deployment_name=azure_openai_deployment,
             endpoint=azure_openai_endpoint,
@@ -28,11 +27,6 @@ class ConversationStateManager:
         )
         self.kernel = Kernel()
         self.kernel.add_service(self.chat_service)
-        self.azure_ai_search_settings = AzureAISearchSettings(
-            endpoint=azure_search_endpoint,
-            index_name=azure_search_index,
-            api_key=SecretStr(azure_search_api_key),
-        )
         self.response_generator = ResponseGenerator(self.kernel)
         self.process_builder = self._build_process()
         self.process = self.process_builder.build()
@@ -47,13 +41,23 @@ class ConversationStateManager:
             step.kernel = self.kernel
             return step
 
+        def create_intent_step():
+            step = IntentRecognitionStep()
+            step.kernel = self.kernel
+            return step
+
+        intent_recognition_step = process.add_step(
+            IntentRecognitionStep,
+            factory_function=create_intent_step,
+        )
+
         rag_evaluation_step = process.add_step(
             InformationRetrievalEvaluationStep,
             factory_function=create_rag_step,
         )
 
         process.on_input_event(event_id="UserInput").send_event_to(
-            rag_evaluation_step,
+            intent_recognition_step,
             parameter_name="user_input"
         )
 
