@@ -1,24 +1,32 @@
+import logging
 from typing import Dict, Any
 
+from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.processes.kernel_process import KernelProcessStep, KernelProcessStepState, KernelProcessStepContext
 
-from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext, ConversationState
+from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
 
 
 class StateTransitionProcess(KernelProcessStep[ConversationContext]):
+    kernel: Kernel | None = None
     state: ConversationContext | None = None
 
+    def __init__(self):
+        super().__init__()
+        # logging.basicConfig(level=logging.INFO)
+
     async def activate(self, state: KernelProcessStepState[ConversationContext]):
-        self.state = state.state or ConversationContext()
+        print(f"StateTransitionProcess")
 
     @kernel_function(name="transition_state")
-    async def transition_state(self, context: KernelProcessStepContext, intent_data: Dict[str, Any], user_input: str):
+    async def transition_state(self, context: KernelProcessStepContext, data: Dict[str, Any]):
         """
         Transitions the conversation state based on the intent data and user input.
         """
-        intent = intent_data.get("intent", "unknown")
-        confidence = intent_data.get("confidence", 0.0)
+        intent = data.get("intent", "unknown")
+        confidence = data.get("confidence", 0.0)
+        user_input = data.get("user_input", "No user input provided. Abort transition.")
 
         self.state.last_intent = intent
 
@@ -31,24 +39,24 @@ class StateTransitionProcess(KernelProcessStep[ConversationContext]):
             return
 
         # State transition logic
-        if intent == "degree_planning" and self.state.artifact.current_state != ConversationState.DEGREE_PLANNING:
-            self.state.artifact.current_state = ConversationState.DEGREE_PLANNING
+        if intent == "degree_planning" and self.state.artifact.current_state != "degree_planning":
+            self.state.artifact.current_state = "degree_planning"
             await context.emit_event(process_event="StateChanged", data={
-                "state": ConversationState.DEGREE_PLANNING,
+                "state": "degree_planning",
                 "user_input": user_input
             })
 
-        elif intent == "course_question" and self.state.artifact.current_state != ConversationState.COURSE_QUESTION:
-            self.state.artifact.current_state = ConversationState.COURSE_QUESTION
+        elif intent == "course_question" and self.state.artifact.current_state != "course_question":
+            self.state.artifact.current_state = "course_question"
             await context.emit_event(process_event="StateChanged", data={
-                "state": ConversationState.COURSE_QUESTION,
+                "state": "course_question",
                 "user_input": user_input
             })
 
-        elif intent == "general_qa" and self.state.artifact.current_state != ConversationState.GENERAL_QA:
-            self.state.artifact.current_state = ConversationState.GENERAL_QA
+        elif intent == "general_qa" and self.state.artifact.current_state != "general_qa":
+            self.state.artifact.current_state = "general_qa"
             await context.emit_event(process_event="StateChanged", data={
-                "state": ConversationState.GENERAL_QA,
+                "state": "general_qa",
                 "user_input": user_input
             })
         else:
