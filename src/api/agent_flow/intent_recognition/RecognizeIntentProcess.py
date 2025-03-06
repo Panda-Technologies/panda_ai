@@ -4,19 +4,18 @@ from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function, KernelArguments
 from semantic_kernel.processes.kernel_process import KernelProcessStep, KernelProcessStepState, KernelProcessStepContext
 from semantic_kernel.prompt_template import PromptTemplateConfig, InputVariable
-from starlette.responses import JSONResponse
 
 from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
 
 class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
     kernel: Kernel | None = None
+    state: ConversationContext | None = None
 
     def __init__(self):
         super().__init__()
-        logging.basicConfig(level=logging.INFO)
+        # logging.basicConfig(level=logging.INFO)
 
     async def activate(self, state: KernelProcessStepState[ConversationContext]):
-        self.state = state.state or ConversationContext()
         self._setup_intent_recognition()
 
     def _setup_intent_recognition(self):
@@ -28,9 +27,16 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
             better determine if the current message is part of an overall flow or conversation intent)
             , identify the most likely intent from these categories:
             - initial: User is starting a new conversation or has just joined the chat. Look for keywords like "hello", "hi", "help", "start", etc.
-            - degree_planning: User wants to discuss degree programs, majors, academic paths, etc.
+            - degree_planning: User wants to discuss degree planning, academic paths, etc.
             - course_question: User wants help with class scheduling, course selection, enrollment, or mentions specific courses.
-            - general_qa: General questions about the university, policies, or other topics
+            - general_qa: General questions about the university, policies, asks about their personal information like their tasks, degree planners, 
+              class schedules, etc. Anything tied to their account that must be retrieved. Also this can include questions about specific degree programs,
+              as long as it does not pertain to degree planning. If a user asks the requirements for a specific degree, this is still general_qa.
+              
+            # IMPORTANT INFORMATION:
+                - If the user is discussing anything assignment related, it is general_qa, and never course_question.
+                  Course question only refers to course selection, scheduling, and enrollment.
+                  
     
             User message: {{$user_input}}
             
@@ -40,6 +46,7 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
             {
                 "intent": "one of the categories above",
                 "confidence": a number between 0 and 1 representing your confidence
+                "reason": Restate the user's message
             }
             """,
             name="intent_recognition",
@@ -65,7 +72,7 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
                 function_name="intent_recognition",
                 arguments=KernelArguments(
                     user_input=user_input,
-                    chat_history=self.state.to_chat_history(),
+                    chat_history=self.state.to_chat_history().messages,
                 )
             )
         else:
@@ -92,8 +99,12 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
 
         data_result = {
             "intent": intent,
-            "confidence": confidence
+            "confidence": confidence,
+            "user_input": user_input,
         }
+        print(data_result["user_input"])
+        print(response_text["reason"])
 
         await context.emit_event(process_event="IntentRecognized", data=data_result)
+
         return data_result
