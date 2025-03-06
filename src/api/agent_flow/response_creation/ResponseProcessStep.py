@@ -1,0 +1,104 @@
+from typing import Dict, Any
+
+from semantic_kernel import Kernel
+from semantic_kernel.functions import kernel_function, KernelArguments
+from semantic_kernel.processes.kernel_process import KernelProcessStep, KernelProcessStepState, KernelProcessStepContext
+
+from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
+from src.api.agent_flow.response_creation.ResponseGenerator import ResponseGenerator
+
+
+class ResponseStep(KernelProcessStep[ConversationContext]):
+    kernel: Kernel | None = None
+    state: ConversationContext = None
+    response_generator: ResponseGenerator = None
+
+    def __init__(self):
+        super().__init__()
+
+    async def activate(self, state: KernelProcessStepState[ConversationContext]):
+        self.response_generator = ResponseGenerator(self.kernel, self.state)
+
+    def _check_data_completeness(self):
+        if self.state.artifact.current_state == "degree_planning":
+            required_fields = {
+                "major": self.state.artifact.major,
+                "degree_type": self.state.artifact.degree_type,
+                "current_term": self.state.artifact.current_term is not None,
+                "start_term": self.state.artifact.start_term is not None,
+                "preferred_courses_per_semester": self.state.artifact.preferred_courses_per_semester is not None,
+                "career_goals": self.state.artifact.career_goals and len(self.state.artifact.career_goals) > 0
+            }
+        else:  # course scheduling state
+            required_fields = {
+                "major": self.state.artifact.major,
+                "current_term": self.state.artifact.current_term is not None,
+                "time_preference": self.state.artifact.time_preference is not None,
+                "preferred_courses_per_semester": self.state.artifact.preferred_courses_per_semester is not None
+            }
+
+        missing = [field for field, value in required_fields.items() if not value]
+        total = len(required_fields)
+        complete = total - len(missing)
+
+        return {
+            "percentage": round((complete / total) * 100),
+            "missing": missing,
+            "is_complete": len(missing) == 0
+        }
+
+    @kernel_function(name="generate_response")
+    async def generate_response(self, context: KernelProcessStepContext, data: Dict[str, Any]) -> str:
+        user_input: str = data.get("user_input", "No user input provided. Please provide user input.")
+        needs_rag: bool = data.get("needs_rag", False)
+        arguments: KernelArguments
+        data_completeness = self._check_data_completeness()
+        missing_fields = data_completeness.get("missing", [])
+        event_to_emit: str
+
+        match self.state.artifact.current_state:
+            case "initial":
+                arguments = KernelArguments(
+                    user_input=user_input,
+                    chat_history=self.state.to_chat_history().messages,
+                )
+                event_to_emit = "InitialResponseGenerated"
+            case "degree_planning":
+                arguments = KernelArguments(
+                    user_input=user_input,
+                    chat_history=self.state.to_chat_history().messages,
+                    missing_fields=missing_fields,
+                )
+                event_to_emit = "DegreePlanningResponseGenerated"
+            case "course_question":
+                arguments = KernelArguments(
+                    user_input=user_input,
+                    chat_history=self.state.to_chat_history().messages,
+                    missing_fields=missing_fields,
+                )
+                event_to_emit = "CourseQuestionResponseGenerated"
+            case "general_qa":
+                arguments = KernelArguments(
+                    user_input=user_input,
+                    chat_history=self.state.to_chat_history().messages,
+                )
+                event_to_emit = "GeneralResponseGenerated"
+            case _:
+                raise ValueError(f"Invalid state: {self.state.artifact.current_state}")
+
+        response = await self.response_generator.generate_response(user_input=user_input, arguments=arguments,
+                                                                   needs_rag=needs_rag, state=self.state)
+
+        response_text = str(response)
+
+        self.state.add_user_message(user_input)
+        self.state.add_assistant_message(response_text)
+
+        await context.emit_event(process_event=event_to_emit, data={
+            "response": response_text,
+            "user_input": user_input
+        })
+
+        print(f"state: {self.state.artifact.current_state}")
+        print(f"chat_history: {self.state.to_chat_history().messages}")
+        return response_text
