@@ -4,29 +4,51 @@ from typing import List, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from semantic_kernel.contents import ChatHistory
 
-class ConversationState(str, Enum):
-    """Enum representing possible conversation states."""
-    INITIAL = "initial"
-    DEGREE_PLANNING = "degree_planning"
-    GENERAL_QA = "general_qa"
-    COURSE_QUESTION = "course_question"
+
+class AcademicTerm(BaseModel):
+    """Represents an academic term with season and year."""
+    term: Optional[str] = None  # "Fall", "Spring", "Summer"
+    year: Optional[int] = None
+
+    def __str__(self):
+        if self.term and self.year:
+            return f"{self.term} {self.year}"
+        return "Unspecified Term"
+
 
 class ConversationArtifact(BaseModel):
-    """Conversation state and collected information."""
-    current_state: ConversationState = ConversationState.INITIAL
-    student_name: Optional[str] = None
-    student_id: Optional[str] = None
-    degree_program: Optional[str] = None
-    completed_courses: List[str] = Field(default_factory=list)
-    current_semester: Optional[str] = None
-    available_days: List[str] = Field(default_factory=list)
-    interests: List[str] = Field(default_factory=list)
-    grad_year: Optional[str] = None
+    """Conversation state and collected degree planning information."""
+    # Conversation state
+    current_state: str = "initial"
+
+    # Basic degree information
+    degree_type: Optional[str] = None  # "BA" or "BS"
+    major: Optional[str] = None
+    concentration: Optional[str] = None
+    minor: Optional[List[str]] = Field(default_factory=list)
+
+    # Term information
+    start_term: Optional[AcademicTerm] = None
+    current_term: Optional[AcademicTerm] = None
+
+    # Course load and scheduling preferences
+    preferred_courses_per_semester: Optional[int] = None
+    min_courses_per_semester: Optional[int] = None
+    max_courses_per_semester: Optional[int] = None
+    time_preference: Optional[str] = None  # "morning", "afternoon", "evening", "no preference"
+    summer_available: Optional[bool] = None
+
+    # Career and interest information
+    career_goals: Optional[List[str]] = Field(default_factory=list)
+
+    total_credits_needed: Optional[int] = None
+    courses_selected: Optional[List[str]] = Field(default_factory=list)
 
 
 class ConversationContext(BaseModel):
     """Context for the current conversation."""
-    chat_history: List[Dict[str, Any]] = Field(default_factory=list)
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    # cached_rag_results: List[Dict[str, str]] = Field(default_factory=list)
     last_intent: Optional[str] = None
     artifact: ConversationArtifact = Field(default_factory=ConversationArtifact)
 
@@ -40,6 +62,9 @@ class ConversationContext(BaseModel):
         if name:
             message["name"] = name
         self.messages.append(message)
+
+    # def add_rag_result(self, content: str) -> None:
+
 
     def add_user_message(self, content: str) -> None:
         """Add a user message to the history."""
