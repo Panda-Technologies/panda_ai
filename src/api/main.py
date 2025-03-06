@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from src.api.api_fetch.models import UserModel, RequirementModel
 from src.api.api_fetch.services import PandaService, UserService, DegreeService
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Initialize FastAPI app
 app = FastAPI(title="Panda AI API", description="API for Panda user data")
@@ -29,7 +31,7 @@ degree_service = DegreeService(panda_service=panda_service)
 async def root():
     return {"message": "Welcome to Panda AI API"}
 
-@app.get("/user", response_model=Dict[str, Any])
+@app.get("/user", response_model=UserModel)
 async def get_user():
     try:
         user_data = user_service.get_user()
@@ -37,7 +39,7 @@ async def get_user():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch user data: {str(e)}")
 
-@app.get("/degree", response_model=Dict[str, Any])
+@app.get("/degree", response_model=List[RequirementModel])
 async def get_degree():
     try:
         degree_data = degree_service.get_degree_req("Business Administration")
