@@ -23,6 +23,7 @@ class ResponseGenerator:
         self.kernel = kernel
         self.setup_response_templates()
         self.state = state
+        self.setup_response_functions()
 
 
     def setup_response_templates(self):
@@ -225,7 +226,6 @@ class ResponseGenerator:
             search_results = await AzureRagChat(state=state, kernel=self.kernel, query=query, prompt_template=rag_prompt).generate_response(user_input=user_input)
             arguments["search_results"] = search_results
             print(f"search_results: {search_results}")
-        self.setup_response_functions()
         try:
             response = await self.kernel.invoke(
                 plugin_name=plugin_name,
