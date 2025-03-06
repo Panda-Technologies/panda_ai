@@ -24,15 +24,11 @@ async def chat():
                 print("\nGoodbye!")
                 break
 
-            response, used_rag, citations = await client.process_message(str(user_input))
+            response = await client.process_message(str(user_input))
 
             print("\nAssistant> ", end="")
             print(response)
 
-            if used_rag:
-                print("\n[RAG was used for this response]")
-                if citations:
-                    print("Citations:", ", ".join(citations))
             print()
 
         except KeyboardInterrupt:
