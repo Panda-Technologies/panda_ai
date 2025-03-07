@@ -1,6 +1,3 @@
-import asyncio
-import logging
-
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai import AzureChatPromptExecutionSettings
@@ -10,32 +7,26 @@ from semantic_kernel.prompt_template import PromptTemplateConfig, InputVariable
 from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
 from src.api.agent_flow.information_search.RagChat import AzureRagChat
 from src.api.agent_flow.information_search.SearchQueryProcess import SearchQuery
-from src.api.agent_flow.response_creation.DegreeAdvisorPrompt import degree_advisor_prompt
+from src.api.agent_flow.response_creation.DegreeAdvisorPrompt import main_degree_advisor_prompt, \
+    basic_info_gather_prompt, career_goal_course_recommendation_prompt, requirements_preference_prompt
 from src.api.agent_flow.response_creation.RAGPrompt import rag_prompt
 
 
 class ResponseGenerator:
     def __init__(self, kernel: Kernel, state: ConversationContext):
         self.initial_prompt = None
-        self.degree_planning_prompt = None
         self.course_question_prompt = None
         self.general_prompt = None
         self.kernel = kernel
-        self.setup_response_templates()
         self.state = state
+        self.main_degree_advisor = main_degree_advisor_prompt
+        self.basic_info_gather = basic_info_gather_prompt
+        self.career_goal_gather = career_goal_course_recommendation_prompt
+        self.requirements_preference_gather = requirements_preference_prompt
+        self.setup_response_templates()
         self.setup_response_functions()
 
-
     def setup_response_templates(self):
-        self.degree_planning_prompt = PromptTemplateConfig(
-            template=degree_advisor_prompt,
-            input_variables=[
-                InputVariable(name="chat_history", description="The chat history", is_required=True),
-                InputVariable(name="user_input", description="The user input", is_required=True),
-                InputVariable(name="missing_fields", description="Missing fields for degree planning", is_required=True),
-                InputVariable(name="search_results", description="The search results from RAG", is_required=False),
-            ]
-        )
         self.course_question_prompt = PromptTemplateConfig(
             template="""
             You are a scheduling assistant helping generate class schedules.
@@ -175,8 +166,26 @@ class ResponseGenerator:
 
         self.kernel.add_function(
             plugin_name="DegreePlanning",
-            function_name="degree_planning",
-            prompt_template_config=self.degree_planning_prompt,
+            function_name="main_degree_advisor",
+            prompt_template_config=self.main_degree_advisor,
+            prompt_execution_settings=execution_settings,
+        )
+        self.kernel.add_function(
+            plugin_name="DegreePlanning",
+            function_name="basic_info_gather",
+            prompt_template_config=self.basic_info_gather,
+            prompt_execution_settings=execution_settings,
+        )
+        self.kernel.add_function(
+            plugin_name="DegreePlanning",
+            function_name="career_goal_gather",
+            prompt_template_config=self.career_goal_gather,
+            prompt_execution_settings=execution_settings,
+        )
+        self.kernel.add_function(
+            plugin_name="DegreePlanning",
+            function_name="requirements_gather",
+            prompt_template_config=self.requirements_preference_gather,
             prompt_execution_settings=execution_settings,
         )
         self.kernel.add_function(
@@ -198,7 +207,7 @@ class ResponseGenerator:
             prompt_execution_settings=execution_settings,
         )
 
-    async def generate_response(self, state: ConversationContext, user_input: str, needs_rag: bool, arguments: KernelArguments) -> FunctionResult | None:
+    async def generate_response(self, state: ConversationContext, user_input: str, retrieval_type: str, arguments: KernelArguments, degree_plan_step: str | None) -> FunctionResult | None:
         arguments["user_input"] = user_input
         prompt_config: PromptTemplateConfig
         plugin_name: str
@@ -207,7 +216,17 @@ class ResponseGenerator:
         match state.artifact.current_state:
             case "degree_planning":
                 plugin_name = "DegreePlanning"
-                function_name = "degree_planning"
+                match degree_plan_step:
+                    case "BASIC_INFO":
+                        function_name = "basic_info_gather"
+                    case "CAREER_GOALS":
+                        function_name = "career_goal_gather"
+                    case "REQUIREMENTS":
+                        function_name = "requirements_gather"
+                    case "MAIN_ADVISOR":
+                        function_name = "main_degree_advisor"
+                    case _:
+                        function_name = "main_degree_advisor"
             case "course_question":
                 plugin_name = "CourseQuestion"
                 function_name = "course_question"
@@ -220,10 +239,10 @@ class ResponseGenerator:
             case _:
                 plugin_name = "Initial"
                 function_name = "initial"
-        if needs_rag:
+        if retrieval_type == "rag" or retrieval_type == "web":
             print("RAG")
-            query = await SearchQuery(kernel=self.kernel, state=self.state).generate_search_query(user_input=user_input)
-            search_results = await AzureRagChat(state=state, kernel=self.kernel, query=query, prompt_template=rag_prompt).generate_response(user_input=user_input)
+            query = await SearchQuery(kernel=self.kernel, state=self.state).generate_search_query(user_input=user_input, retrieval_type=retrieval_type)
+            search_results = await AzureRagChat(state=state, kernel=self.kernel, query=query, retrieval_type=retrieval_type, prompt_template=rag_prompt).generate_response()
             arguments["search_results"] = search_results
             print(f"search_results: {search_results}")
         try:
