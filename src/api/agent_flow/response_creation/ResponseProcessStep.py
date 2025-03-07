@@ -4,6 +4,7 @@ from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function, KernelArguments
 from semantic_kernel.processes.kernel_process import KernelProcessStep, KernelProcessStepState, KernelProcessStepContext
 
+from src.api.agent_flow.ProcessValidation.DegreePlanningStageValidation import DegreePlanningStageValidation
 from src.api.agent_flow.chat_flow.ConversationContext import ConversationContext
 from src.api.agent_flow.response_creation.ResponseGenerator import ResponseGenerator
 
@@ -12,12 +13,14 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
     kernel: Kernel | None = None
     state: ConversationContext = None
     response_generator: ResponseGenerator = None
+    degree_plan_validator: DegreePlanningStageValidation = None
 
     def __init__(self):
         super().__init__()
 
     async def activate(self, state: KernelProcessStepState[ConversationContext]):
         self.response_generator = ResponseGenerator(self.kernel, self.state)
+        self.degree_plan_validator = DegreePlanningStageValidation(kernel=self.kernel, state=self.state)
 
     def _check_data_completeness(self):
         if self.state.artifact.current_state == "degree_planning":
@@ -50,11 +53,12 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
     @kernel_function(name="generate_response")
     async def generate_response(self, context: KernelProcessStepContext, data: Dict[str, Any]) -> str:
         user_input: str = data.get("user_input", "No user input provided. Please provide user input.")
-        needs_rag: bool = data.get("needs_rag", False)
+        retrieval_type: str = data.get("retrieval_type", "none")
         arguments: KernelArguments
         data_completeness = self._check_data_completeness()
         missing_fields = data_completeness.get("missing", [])
         event_to_emit: str
+        degree_plan_step: str | None = None
 
         match self.state.artifact.current_state:
             case "initial":
@@ -64,10 +68,10 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
                 )
                 event_to_emit = "InitialResponseGenerated"
             case "degree_planning":
+                degree_plan_step = await self.degree_plan_validator.determine_degree_planning_state(user_input, missing_fields)
                 arguments = KernelArguments(
                     user_input=user_input,
                     chat_history=self.state.to_chat_history().messages,
-                    missing_fields=missing_fields,
                 )
                 event_to_emit = "DegreePlanningResponseGenerated"
             case "course_question":
@@ -87,7 +91,7 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
                 raise ValueError(f"Invalid state: {self.state.artifact.current_state}")
 
         response = await self.response_generator.generate_response(user_input=user_input, arguments=arguments,
-                                                                   needs_rag=needs_rag, state=self.state)
+                                                                   retrieval_type=retrieval_type, state=self.state, degree_plan_step=degree_plan_step)
 
         response_text = str(response)
 
