@@ -42,11 +42,10 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
             
             Chat history: {{$chat_history}}
     
-            Respond in the following JSON format:
+            Respond ONLY in the following JSON format:
             {
                 "intent": "one of the categories above",
                 "confidence": a number between 0 and 1 representing your confidence
-                "reason": Restate the user's message
             }
             """,
             name="intent_recognition",
@@ -102,8 +101,6 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
             "confidence": confidence,
             "user_input": user_input,
         }
-        print(data_result["user_input"])
-        print(response_text["reason"])
 
         await context.emit_event(process_event="IntentRecognized", data=data_result)
 
