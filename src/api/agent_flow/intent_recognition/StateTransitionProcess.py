@@ -30,7 +30,7 @@ class StateTransitionProcess(KernelProcessStep[ConversationContext]):
 
         self.state.last_intent = intent
 
-        if confidence < 0.6:
+        if confidence < 0.7:
             # Stay in current state if confidence is low
             await context.emit_event(process_event="StateUnchanged", data={
                 "state": self.state.artifact.current_state,
