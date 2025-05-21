@@ -13,6 +13,7 @@ from src.api.agent_flow.information_search.InformationRetrievalEvaluationProcess
 from src.api.agent_flow.intent_recognition.RecognizeIntentProcess import IntentRecognitionStep
 from src.api.agent_flow.response_creation.ResponseProcessStep import ResponseStep
 from src.api.agent_plugins.Course import CourseRecommendationPlugin
+from src.api.agent_plugins.DegreeInfo import DegreeInfoPlugin
 from src.api.agent_plugins.StudentInfo import StudentInfoPlugin
 
 
@@ -43,9 +44,11 @@ class ConversationStateManager:
 
         course_plugin = CourseRecommendationPlugin(shared_context)
         student_info_plugin = StudentInfoPlugin(shared_context)
+        degree_plugin = DegreeInfoPlugin()
 
         self.kernel.add_plugin(course_plugin, plugin_name="CourseRecommendationPlugin")
         self.kernel.add_plugin(student_info_plugin, plugin_name="StudentInfoPlugin")
+        self.kernel.add_plugin(degree_plugin, plugin_name="DegreeInfoPlugin")
 
         T = TypeVar("T")
 
@@ -86,7 +89,17 @@ class ConversationStateManager:
             parameter_name="user_input"
         )
 
-        intent_recognition_step.on_event("IntentRecognized").send_event_to(
+        intent_recognition_step.on_event(event_id="IntentRecognized").send_event_to(
+            state_transition_step,
+            parameter_name="data"
+        )
+
+        intent_recognition_step.on_event(event_id="DegreeIntent").send_event_to(
+            degree_planning_validation_step,
+            parameter_name="data"
+        )
+
+        degree_planning_validation_step.on_event(event_id="DegreePlanningValidationStateChanged").send_event_to(
             state_transition_step,
             parameter_name="data"
         )
@@ -103,11 +116,6 @@ class ConversationStateManager:
 
         rag_evaluation_step.on_event(event_id="RagEvaluated").send_event_to(
             response_step,
-            parameter_name="data"
-        )
-
-        response_step.on_event(event_id="DegreePlanningResponseGenerated").send_event_to(
-            degree_planning_validation_step,
             parameter_name="data"
         )
 
@@ -141,4 +149,4 @@ class ConversationStateManager:
                 return "I'm sorry, I couldn't generate a response. Please try again with the same message."
             return message
 
-        return "I'm sorry, I couldn't generate a response."
+        return "I'm sorry, I couldn't generate a response. Please try again with the same message."

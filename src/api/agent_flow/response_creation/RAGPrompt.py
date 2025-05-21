@@ -15,6 +15,9 @@ rag_prompt = PromptTemplateConfig(
         5.	Prioritize relevance:
         •	If multiple sources exist, focus on the most UNC-relevant information.
         •	Filter out generic, outdated, or irrelevant content.
+        6. Ensure that when you are looking up requirements or information about a major and you return courses,
+           return the full course codes and the course names. Ex(COMP 110: Introduction to Programming). You must always do this
+           when prompted for requirements or courses.
         
     Search Query: {{$query}}
     """,

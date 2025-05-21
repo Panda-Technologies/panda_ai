@@ -144,4 +144,5 @@ class AzureRagChat:
 
         # Generate response
         response = await self.kernel.invoke(self.chat_function, arguments=args)
+
         return response

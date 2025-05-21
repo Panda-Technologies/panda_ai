@@ -160,7 +160,7 @@ class ResponseGenerator:
     def setup_response_functions(self):
         execution_settings = AzureChatPromptExecutionSettings()
         execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
-            filters={"included_plugins": ["StudentInfoPlugin", "CourseRecommendationPlugin"]},
+            filters={"included_plugins": ["StudentInfoPlugin", "CourseRecommendationPlugin", "DegreeInfoPlugin"]},
             auto_invoke=True
         )
 
@@ -239,10 +239,15 @@ class ResponseGenerator:
             case _:
                 plugin_name = "Initial"
                 function_name = "initial"
+
         if retrieval_type == "rag" or retrieval_type == "web":
             print("RAG")
             query = await SearchQuery(kernel=self.kernel, state=self.state).generate_search_query(user_input=user_input, retrieval_type=retrieval_type)
             search_results = await AzureRagChat(state=state, kernel=self.kernel, query=query, retrieval_type=retrieval_type, prompt_template=rag_prompt).generate_response()
+
+            if str(search_results) == "No data found.":
+                search_results = await AzureRagChat(state=state, kernel=self.kernel, query=query, retrieval_type=retrieval_type, prompt_template=rag_prompt).generate_response()
+
             arguments["search_results"] = search_results
             print(f"search_results: {search_results}")
         try:

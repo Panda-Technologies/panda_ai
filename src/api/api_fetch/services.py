@@ -78,7 +78,7 @@ class DegreeService:
     def __init__(self, panda_service: PandaService):
         self.panda = panda_service
 
-    def get_degree_req(self, degree_name: str):
+    def get_degree_req(self, degree_name: str) -> List[RequirementModel]:
         query = """
         query GetRequirements($degreeName: String) {
           getRequirements(degreeName: $degreeName) {
@@ -87,6 +87,7 @@ class DegreeService:
             reqType
             classIds
             degreeId
+            classNames
           }
         }
         """

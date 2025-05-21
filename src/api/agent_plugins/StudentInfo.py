@@ -15,8 +15,8 @@ class StudentInfoPlugin:
 
     @kernel_function(name="clear_student_major_info",
                      description="""Clear student major information. 
-                     This is used when the user has indicated they want 
-                     a different major from the one they initially selected""")
+                     You must use this when a user changes their desired
+                     major during degree planning""")
     def clear_student_major_info(self) -> str:
         """Clear student major information."""
         artifact = self.state.artifact

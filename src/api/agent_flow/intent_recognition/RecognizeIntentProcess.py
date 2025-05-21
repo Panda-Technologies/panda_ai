@@ -23,25 +23,33 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
         intent_recognition_prompt = PromptTemplateConfig(
             template="""
             You are an AI assistant that analyzes user messages to determine their primary intent.
-            Based on the following message and chat history to use as context (use chat history to 
-            better determine if the current message is part of an overall flow or conversation intent)
-            , identify the most likely intent from these categories:
+            Based on the following message and chat history, identify the most likely intent from these categories:
+            
             - initial: User is starting a new conversation or has just joined the chat. Look for keywords like "hello", "hi", "help", "start", etc.
-            - degree_planning: User wants to discuss degree planning, academic paths, etc.
+            - degree_planning: User wants to discuss degree planning, academic paths, etc. This includes discussions about career goals, professional schools, and ALL follow-up questions related to an ongoing degree planning conversation.
             - course_question: User wants help with class scheduling, course selection, enrollment, or mentions specific courses.
-            - general_qa: General questions about the university, policies, asks about their personal information like their tasks, degree planners, 
-              class schedules, etc. Anything tied to their account that must be retrieved. Also this can include questions about specific degree programs,
-              as long as it does not pertain to degree planning. If a user asks the requirements for a specific degree, this is still general_qa.
-              
-            # IMPORTANT INFORMATION:
-                - If the user is discussing anything assignment related, it is general_qa, and never course_question.
-                  Course question only refers to course selection, scheduling, and enrollment.
-                  
-    
+            - general_qa: General questions about the university, policies, account information, etc. that are completely unrelated to degree planning.
+            
+            # CRITICAL CONTEXT CONTINUITY RULES:
+            1. STRONG PREFERENCE FOR CONTINUATION: If a user has started a degree planning flow, ALL subsequent messages should be interpreted as degree_planning UNLESS they EXPLICITLY change the subject to something completely unrelated.
+            
+            2. FOLLOW-UP QUESTIONS: If a user asks for clarification, explanation, or differences related to any aspect of their current degree planning conversation, this MUST be kept as degree_planning. Examples:
+               - "What's the difference between the times?"
+               - "Can you explain that more?"
+               - "What do you mean by that?"
+               - "Tell me more about this requirement"
+            
+            3. SLIGHT TANGENTS: Even if a user briefly asks about something that seems like general_qa but is still related to their academic journey, keep them in degree_planning.
+            
+            4. ACTIVE FLOW PRESERVATION: Once in degree_planning, only change to a different intent if the user clearly and explicitly:
+               - Asks about their personal account information unrelated to degrees
+               - Switches to questions about university policies unconnected to degree planning
+               - Completely changes the subject to non-academic matters
+            
             User message: {{$user_input}}
             
             Chat history: {{$chat_history}}
-    
+            
             Respond ONLY in the following JSON format:
             {
                 "intent": "one of the categories above",
@@ -101,6 +109,10 @@ class IntentRecognitionStep(KernelProcessStep[ConversationContext]):
             "confidence": confidence,
             "user_input": user_input,
         }
+
+        if data_result["intent"] == "degree_planning":
+            await context.emit_event(process_event="DegreeIntent", data=data_result)
+            return data_result
 
         await context.emit_event(process_event="IntentRecognized", data=data_result)
 

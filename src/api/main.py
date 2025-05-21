@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 # Get session cookie from environment variable or use default
-SESSION_COOKIE = os.getenv("PANDA_SESSION_COOKIE", "gql-api=s%3AmZ9_NJ8jAs_Ajqq5B7Snfbx3ADBigNfa.nD0ni94Ku%2BnRYKhQYDXm%2BSMlHnHkIRS48RD84gaQbUA")
+SESSION_COOKIE = os.getenv("PANDA_SESSION_COOKIE", "gql-api=s%3AlNJFo2a3Q0nd_B-YQdY8ayfEJuHvQ4Fm.pr9GSOGlj4n%2Bkq4BvYXdDC7wA6sHVFycM%2B%2Bkzu1v3z4")
 
 # Create services once at startup
 panda_service = PandaService(session_cookie=SESSION_COOKIE)

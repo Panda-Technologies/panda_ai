@@ -85,6 +85,7 @@ class RequirementModel(BaseModel):
     reqType: str
     classIds: List[int]
     degreeId: int
+    classNames: List[str]
 
 
 class UserModel(BaseModel):

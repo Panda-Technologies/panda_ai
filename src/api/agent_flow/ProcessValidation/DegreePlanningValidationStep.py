@@ -47,7 +47,8 @@ class DegreePlanningValidationStep(KernelProcessStep[ConversationContext]):
                 plugin_name="DegreePlanningValidation",
                 function_name="validate_degree_planning",
                 arguments=KernelArguments(
-                    chat_history=self.state.to_chat_history().messages
+                    chat_history=self.state.to_chat_history().messages,
+                    user_input=data["user_input"]
                 )
             )
         else:
@@ -86,7 +87,6 @@ class DegreePlanningValidationStep(KernelProcessStep[ConversationContext]):
             for course in validated_state["courses_selected"]:
                 if course not in self.state.artifact.courses_selected:
                     self.state.artifact.courses_selected.append(course)
+        print(f"Preferred courses selected: {self.state.artifact.preferred_courses_per_semester}")
         await context.emit_event(process_event="DegreePlanningValidationStateChanged", data=data)
         return f"State changed from {current_state} to {validated_state['current_state']}"
-
-

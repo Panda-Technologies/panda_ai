@@ -51,6 +51,7 @@ class DegreePlanningStageValidation:
             - ADVANCE to this stage when:
               * Major and degree_type (if applicable) have been confirmed
               * User has expressed interest in degree planning
+              * User has confirmed they want to plan for a newly selected major
             - REMAIN in this stage until:
               * Both preferred_class_times AND course_load have been specified
             - REVERT to this stage if:
@@ -62,15 +63,16 @@ class DegreePlanningStageValidation:
               * This should trigger IMMEDIATELY after the user provides their course_load, even if they provide it as a simple number (like "4" or "5")
               * Do not wait for additional messages after course_load is specified - move to this stage right away
             - REMAIN in this stage until:
-              * career_goals have been identified
-              * At least one recommended_course has been suggested
+              * career_goals have been identified AND processed
+              * At least one recommended_course has been explicitly suggested in the assistant's response
+              * The assistant has had an opportunity to respond to the career goal with course recommendations
             - REVERT to this stage if:
               * User explicitly wants to reconsider their career goals or course recommendations
             
             ## REQUIREMENTS Stage
             - ADVANCE to this stage when:
               * All prior information has been collected (major, degree_type, preferred_class_times, course_load, career_goals)
-              * At least one recommended_course has been suggested
+              * At least one recommended_course has been suggested based on the career goal
             - REMAIN in this stage until:
               * All required requirement_preferences have been collected
             - REVERT to this stage if:
@@ -78,8 +80,11 @@ class DegreePlanningStageValidation:
             
             ## COMPLETED Stage
             - ADVANCE to this stage when:
-              * All required information across all categories has been collected
-              * No further requirement choices are needed
+              * All prior stages have been completed
+              * User has specified their elective focus areas or categories of interest
+              * The conversation has reached a point where all essential planning information has been gathered
+              * Specifically, the user has responded to the question about which elective areas or focus areas they want
+            - TRANSITION to this stage IMMEDIATELY after the user provides their elective area choices
             
             # Change Detection Logic
             - Major/Degree Change: If user changes major or degree_type, revert to MAIN_ADVISOR
@@ -87,11 +92,22 @@ class DegreePlanningStageValidation:
             - Goal Change: If user changes career goals, revert to CAREER_GOALS
             - Requirement Change: If user changes specific requirements, remain in REQUIREMENTS
             
+            # Critical Rules for Major Change
+            - When a user changes their major and confirms they want to plan for the new major:
+            - If they already have preferred_class_times, IMMEDIATELY move to BASIC_INFO stage
+            - If a user says "yes" or affirmatively responds to continuing with a new major, treat this as confirming the major and move to BASIC_INFO
+            - Do not stay in MAIN_ADVISOR after a user has confirmed a change of major with "yes" or similar affirmation
+            
             # Immediate Progression Rules
             - When both major and degree_type are set, move to BASIC_INFO
             - When both preferred_class_times and course_load are set, move to CAREER_GOALS, without waiting for additional messages
             - When career_goals and at least one recommended_course are set, move to REQUIREMENTS
             - This means you should check all stage progression conditions after EVERY user message
+            
+            # Completion Detection
+            - When the assistant presents elective areas or categories (e.g., "Software Development", "Cybersecurity", etc.) and asks the user to select from them
+            - And the user responds with their selection(s) (e.g., "software development and cybersecurity")
+            - Then the system should immediately move to COMPLETED stage
             
             # Output Format
             Your response must ONLY contain one of these stage names as a plain string:
@@ -143,6 +159,18 @@ class DegreePlanningStageValidation:
                 chat_history=self.state.to_chat_history().messages,
             )
         )
+        if response == "REQUIREMENTS":
+            if len(self.state.artifact.courses_selected) == 0:
+                print("Degree plan stage validation error - fallback activated")
+                response = "CAREER_GOALS"
+
+        if response == "BASIC_INFO":
+            if self.state.artifact.preferred_courses_per_semester is not None:
+                print("Degree plan stage validation error - fallback activated")
+                response = "CAREER_GOALS"
+
+
+
         print(f"missing fields: {missing_fields}")
         print(f"response: {response}")
         return str(response)

@@ -34,7 +34,9 @@ class SearchQuery:
             ## RAG QUERY STRUCTURE (When retrieval_type = "rag") ##
             - Include "UNC" or "University of North Carolina" in EVERY RAG query
             - For degree planning: "UNC [major] [degree type] requirements courses planning"
-            - For career paths: "UNC [major] [career] pathways opportunities"
+            - For career paths: "UNC [major] [career] pathways opportunities" 
+            - For premed specifically: "UNC [major] BS requirements courses planning career premed"
+            - For other pre-professional tracks: "UNC [major] [pre-professional track] requirements courses"
             - For specific courses: "UNC [course code] description prerequisites"
             - For general questions: "UNC [topic] information resources"
             - If completely uncertain, default to "UNC academic advising general information"
@@ -59,11 +61,11 @@ class SearchQuery:
             - Web Query for "How do I prepare for pharmacy school?": "pharmacy school prerequisites PharmD requirements PCAT"
             
             ## SPECIAL CASES ##
-- For multi-subject queries (e.g., asking about multiple course requirements at once):
-  - Combine subjects into a single concise query: "UNC [subject1] [subject2] [subject3] courses requirements planning"
-  - Limit to 6-8 keywords total
-  - DO NOT repeat terms like "courses" or "requirements" for each subject
-  - Example: "What courses satisfy biology, physics, and chemistry requirements?" → "UNC biology physics chemistry courses requirements planning"
+            - For multi-subject queries (e.g., asking about multiple course requirements at once):
+              - Combine subjects into a single concise query: "UNC [subject1] [subject2] [subject3] courses requirements planning"
+              - Limit to 6-8 keywords total
+              - DO NOT repeat terms like "courses" or "requirements" for each subject
+              - Example: "What courses satisfy biology, physics, and chemistry requirements?" → "UNC biology physics chemistry courses requirements planning"
             
             ## Context From Conversation Artifact ##
             (Use this information for ambiguous queries)

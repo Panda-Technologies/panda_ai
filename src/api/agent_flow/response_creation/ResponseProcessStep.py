@@ -57,7 +57,6 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
         arguments: KernelArguments
         data_completeness = self._check_data_completeness()
         missing_fields = data_completeness.get("missing", [])
-        event_to_emit: str
         degree_plan_step: str | None = None
 
         match self.state.artifact.current_state:
@@ -66,27 +65,23 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
                     user_input=user_input,
                     chat_history=self.state.to_chat_history().messages,
                 )
-                event_to_emit = "InitialResponseGenerated"
             case "degree_planning":
                 degree_plan_step = await self.degree_plan_validator.determine_degree_planning_state(user_input, missing_fields)
                 arguments = KernelArguments(
                     user_input=user_input,
                     chat_history=self.state.to_chat_history().messages,
                 )
-                event_to_emit = "DegreePlanningResponseGenerated"
             case "course_question":
                 arguments = KernelArguments(
                     user_input=user_input,
                     chat_history=self.state.to_chat_history().messages,
                     missing_fields=missing_fields,
                 )
-                event_to_emit = "CourseQuestionResponseGenerated"
             case "general_qa":
                 arguments = KernelArguments(
                     user_input=user_input,
                     chat_history=self.state.to_chat_history().messages,
                 )
-                event_to_emit = "GeneralResponseGenerated"
             case _:
                 raise ValueError(f"Invalid state: {self.state.artifact.current_state}")
 
@@ -97,11 +92,6 @@ class ResponseStep(KernelProcessStep[ConversationContext]):
 
         self.state.add_user_message(user_input)
         self.state.add_assistant_message(response_text)
-
-        await context.emit_event(process_event=event_to_emit, data={
-            "response": response_text,
-            "user_input": user_input
-        })
 
         print(f"state: {self.state.artifact.current_state}")
         print(f"chat_history: {self.state.to_chat_history().messages}")

@@ -44,6 +44,9 @@ did not change major preference during the conversation.
 6. Degree type is "BA", "BS", "BSBA", etc.
 7. For preferred_courses_per semester, this can be just a number that the user responds with or a range of numbers. It can just be a number on its own like (4, 5, 3, etc.)
 
+User Input:
+{{$user_input}}
+
 Chat History:
 {{$chat_history}}
 
